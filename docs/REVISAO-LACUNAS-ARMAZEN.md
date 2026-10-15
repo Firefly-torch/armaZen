@@ -30,7 +30,7 @@
 - **Movimentações:** formulários de entrada/saída/transferência/ajuste; origem/destino; responsável; referência; motivos; filtros; estorno rastreável; validação de material inativo, endereço bloqueado, quantidade e saldo; prevenção de duplicidade.
 - **Inventário:** fluxo de contagem com saldo esperado, contagem física, diferença, justificativa e geração de ajuste rastreável. O indicador atual usa os itens de contagem disponíveis; precisa ser conferido contra o modelo de negócio final.
 - **Kanban:** criar/editar/atribuir tarefas, prazo, prioridade e colunas persistidas; alertas de atraso; vínculo com material/endereço/movimentação. Mudar coluna não pode alterar estoque por si só.
-- **Exportação:** selecionar conjunto de dados e campos; ordenar/m mapear cabeçalhos; filtros; formatos de data/número e CSV; prévia e validação; geração real de CSV/XLSX/JSON; salvar/reutilizar modelos e registrar histórico. A dependência `xlsx` já aparece no `package.json`, mas isso não comprova que a exportação esteja implementada.
+- **Exportação:** selecionar conjunto de dados e campos; ordenar/mapear cabeçalhos; filtros; formatos de data/número e CSV; prévia e validação; geração real de CSV/XLSX/JSON; salvar/reutilizar modelos e registrar histórico. A dependência `xlsx` já aparece no `package.json`, mas isso não comprova que a exportação esteja implementada.
 - **Gestão de usuários:** convite/cadastro seguro, associação a organização e papéis Consulta/Operação/Gestão; controles também no backend, não apenas na interface.
 - **Auditoria:** registrar ator, ação, entidade, data/hora e contexto relevante, sem permitir edição comum dos registros.
 
