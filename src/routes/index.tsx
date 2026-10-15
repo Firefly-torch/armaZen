@@ -2,8 +2,8 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Activity, AlertTriangle, ArrowDownToLine, ArrowLeftRight, Boxes, Building2,
-  CheckCircle2, ChevronDown, ClipboardList, Download, LayoutDashboard, LoaderCircle,
-  LogOut, MapPinned, Package, RefreshCw, ShieldCheck, Warehouse,
+  CheckCircle2, ClipboardList, Download, LayoutDashboard,
+  MapPinned, Package, RefreshCw, ShieldCheck, Warehouse,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import type { User } from "@supabase/supabase-js";
@@ -25,11 +25,6 @@ const navigation: { id: Section; label: string; icon: typeof Boxes }[] = [
 
 function Index() {
   const [user, setUser] = useState<User | null>(null);
-  const [authReady, setAuthReady] = useState(false);
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [authError, setAuthError] = useState("");
-  const [authBusy, setAuthBusy] = useState(false);
   const [section, setSection] = useState<Section>("dashboard");
   const [orgId, setOrgId] = useState("");
   const [orgName, setOrgName] = useState("");
@@ -43,10 +38,8 @@ function Index() {
     let alive = true;
     supabase.auth.getSession().then(({ data, error }) => {
       if (!alive) return;
-      if (error) setAuthError("Não foi possível verificar a sessão. Tente novamente.");
       setUser(data.session?.user ?? null);
-      setAuthReady(true);
-    }).catch(() => { if (alive) { setAuthError("Não foi possível conectar à autenticação do Supabase."); setAuthReady(true); } });
+    }).catch(() => { /* O dashboard permanece acessível mesmo sem sessão. */ });
     const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null);
       if (!session) { setOrgId(""); setOrgName(""); setRole(""); }
@@ -123,37 +116,6 @@ function Index() {
     { label: "Divergências de inventário", value: String(metrics.divergences), note: "Itens com diferença registrada", icon: AlertTriangle, tone: metrics.divergences ? "warning" : "normal" },
   ], [metrics]);
 
-  async function signIn(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault(); setAuthBusy(true); setAuthError("");
-    try {
-      const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
-      if (error) setAuthError(error.message === "Invalid login credentials" ? "E-mail ou senha inválidos." : "Não foi possível entrar. Verifique os dados e a configuração do Supabase.");
-    } catch { setAuthError("O serviço de autenticação não está disponível. Confira a configuração do Supabase."); }
-    finally { setAuthBusy(false); }
-  }
-
-  async function signOut() {
-    const { error } = await supabase.auth.signOut();
-    if (error) setAuthError("Não foi possível encerrar a sessão. Tente novamente.");
-  }
-
-  if (!authReady) return <div className="flex min-h-screen items-center justify-center gap-3 bg-background text-muted-foreground"><LoaderCircle className="h-5 w-5 animate-spin" /> Verificando sessão...</div>;
-
-  if (!user) return (
-    <main className="flex min-h-screen items-center justify-center bg-background px-4 py-10">
-      <section className="w-full max-w-md rounded-2xl border bg-card p-8 shadow-sm">
-        <div className="mb-8 flex items-center gap-3"><div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary text-primary-foreground"><Warehouse className="h-6 w-6" /></div><div><p className="text-2xl font-bold tracking-tight">armaZen</p><p className="text-sm text-muted-foreground">Gestão de armazém · WMS</p></div></div>
-        <h1 className="text-xl font-semibold">Acesse sua operação</h1><p className="mt-2 text-sm text-muted-foreground">Entre com a conta cadastrada no Supabase Auth.</p>
-        <form onSubmit={signIn} className="mt-6 space-y-4">
-          <label className="block text-sm font-medium">E-mail<input type="email" autoComplete="username" required value={email} onChange={(e) => setEmail(e.target.value)} className="mt-1.5 w-full rounded-lg border bg-background px-3 py-2.5 outline-none focus:ring-2 focus:ring-ring" /></label>
-          <label className="block text-sm font-medium">Senha<input type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} className="mt-1.5 w-full rounded-lg border bg-background px-3 py-2.5 outline-none focus:ring-2 focus:ring-ring" /></label>
-          {authError && <p role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{authError}</p>}
-          <button disabled={authBusy} className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 py-3 font-semibold text-primary-foreground disabled:opacity-60">{authBusy && <LoaderCircle className="h-4 w-4 animate-spin" />}{authBusy ? "Entrando..." : "Entrar"}</button>
-        </form>
-        <p className="mt-5 text-xs leading-5 text-muted-foreground">O acesso depende da configuração do Supabase e de um usuário previamente cadastrado. O sistema não cria uma conta administrativa padrão.</p>
-      </section>
-    </main>
-  );
 
   return (
     <div className="min-h-screen bg-background text-foreground md:flex">
@@ -167,14 +129,14 @@ function Index() {
       <main className="min-w-0 flex-1 md:ml-64">
         <header className="flex flex-wrap items-center justify-between gap-3 border-b bg-card px-5 py-4 sm:px-8">
           <div><p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Operação / {navigation.find((n) => n.id === section)?.label}</p><h1 className="mt-1 text-xl font-semibold">{section === "dashboard" ? "Visão geral da operação" : navigation.find((n) => n.id === section)?.label}</h1></div>
-          <div className="flex items-center gap-3"><div className="hidden text-right sm:block"><p className="text-sm font-medium">{orgName || "Carregando organização..."}</p><p className="text-xs capitalize text-muted-foreground">{role || "Perfil não identificado"}</p></div><button onClick={signOut} className="flex items-center gap-2 rounded-lg border px-3 py-2 text-sm hover:bg-muted"><LogOut className="h-4 w-4" /><span className="hidden sm:inline">Sair</span></button></div>
+          <div className="flex items-center gap-3"><div className="hidden text-right sm:block"><p className="text-sm font-medium">{orgName || "Carregando organização..."}</p><p className="text-xs capitalize text-muted-foreground">{role || "Perfil não identificado"}</p></div></div>
         </header>
         <div className="p-5 sm:p-8">
           {dataError && <div role="alert" className="mb-5 flex items-start gap-3 rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm"><AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-destructive" /><div className="flex-1">{dataError}</div><button onClick={() => { setDataError(""); void loadMetrics(); }} className="font-medium underline">Tentar novamente</button></div>}
           {section === "dashboard" ? <>
             <div className="mb-6 flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-base font-semibold">Indicadores operacionais</h2><p className="mt-1 text-sm text-muted-foreground">Valores consultados do Supabase; sem números demonstrativos fixos.</p></div><button onClick={() => void loadMetrics()} disabled={loading || !orgId} className="flex items-center gap-2 rounded-lg border bg-card px-3 py-2 text-sm font-medium disabled:opacity-50"><RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} /> Atualizar</button></div>
-            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">{cards.map((card) => { const Icon = card.icon; return <article key={card.label} className="rounded-xl border bg-card p-5 shadow-sm"><div className="flex items-start justify-between gap-3"><p className="text-sm font-medium text-muted-foreground">{card.label}</p><span className={`rounded-lg p-2 ${card.tone === "warning" ? "bg-amber-100 text-amber-800" : "bg-muted text-foreground"}`}><Icon className="h-4 w-4" /></span></div><p className="mt-4 text-3xl font-semibold tracking-tight">{loading ? "—" : card.value}</p><p className="mt-2 text-xs text-muted-foreground">{card.note}</p></article>; })}</div>
-            <section className="mt-6 rounded-xl border bg-card p-5"><div className="flex items-center gap-2"><CheckCircle2 className="h-5 w-5 text-muted-foreground" /><h2 className="font-semibold">Estado da conexão</h2></div><p className="mt-2 text-sm text-muted-foreground">{orgId ? "Sessão autenticada e organização identificada. Os indicadores acima refletem os registros que o usuário tem permissão para consultar." : "Aguardando associação do usuário a uma organização."}</p>{lastUpdated && <p className="mt-2 text-xs text-muted-foreground">Última consulta: {lastUpdated.toLocaleString("pt-BR")}</p>}</section>
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">{cards.map((card) => { const Icon = card.icon; return <article key={card.label} className="rounded-xl border bg-card p-5 shadow-sm"><div className="flex items-start justify-between gap-3"><p className="text-sm font-medium text-muted-foreground">{card.label}</p><span className={`rounded-lg p-2 ${card.tone === "warning" ? "bg-amber-100 text-amber-800" : "bg-muted text-foreground"}`}><Icon className="h-4 w-4" /></span></div><p className="mt-4 text-3xl font-semibold tracking-tight">{!orgId || loading ? "—" : card.value}</p><p className="mt-2 text-xs text-muted-foreground">{card.note}</p></article>; })}</div>
+            <section className="mt-6 rounded-xl border bg-card p-5"><div className="flex items-center gap-2"><CheckCircle2 className="h-5 w-5 text-muted-foreground" /><h2 className="font-semibold">Estado da conexão</h2></div><p className="mt-2 text-sm text-muted-foreground">{orgId ? "Organização identificada. Os indicadores refletem os registros disponíveis para consulta." : "Nenhuma organização foi identificada. Para carregar dados reais, configure o acesso ao Supabase e a associação da organização."}</p>{lastUpdated && <p className="mt-2 text-xs text-muted-foreground">Última consulta: {lastUpdated.toLocaleString("pt-BR")}</p>}</section>
           </> : <section className="rounded-xl border bg-card p-6 sm:p-8"><div className="flex h-12 w-12 items-center justify-center rounded-xl bg-muted"><Building2 className="h-6 w-6" /></div><h2 className="mt-4 text-lg font-semibold">Módulo em revisão</h2><p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">A navegação está preparada, mas este módulo ainda precisa de telas e fluxos CRUD integrados ao Supabase. Não há dados de exemplo apresentados como se fossem reais. A lista de lacunas e a sequência de implementação estão documentadas no repositório.</p><div className="mt-5 flex flex-wrap gap-3"><button onClick={() => setSection("dashboard")} className="rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground">Voltar ao dashboard</button>{section === "exports" && <span className="flex items-center gap-2 rounded-lg border px-3 py-2 text-sm text-muted-foreground"><ArrowDownToLine className="h-4 w-4" /> CSV, XLSX e JSON ainda precisam ser implementados</span>}</div></section>}
           <footer className="mt-8 flex flex-wrap items-center justify-between gap-2 border-t pt-4 text-xs text-muted-foreground"><span>armaZen · Sistema de Gestão de Armazém</span><span>Dados demonstrativos não são tratados como dados reais.</span></footer>
         </div>
