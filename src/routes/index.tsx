@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Activity, AlertTriangle, ArrowDownToLine, ArrowLeftRight, Boxes, Building2,
   CheckCircle2, ChevronDown, ClipboardList, Download, LayoutDashboard, LoaderCircle,
-  LogOut, MapPinned, Package, RefreshCw, Search, ShieldCheck, Warehouse,
+  LogOut, MapPinned, Package, RefreshCw, ShieldCheck, Warehouse,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import type { User } from "@supabase/supabase-js";
