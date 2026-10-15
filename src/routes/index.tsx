@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import * as XLSX from "xlsx";
 import {
   Activity, AlertTriangle, ArrowLeftRight, Boxes, CheckCircle2,
@@ -12,6 +12,7 @@ import type { User } from "@supabase/supabase-js";
 export const Route = createFileRoute("/")({ component: Index });
 
 type Section = "dashboard" | "warehouse" | "materials" | "movements" | "tasks" | "exports" | "settings";
+/* eslint-disable @typescript-eslint/no-explicit-any */
 type AnyRow = Record<string, any>;
 const db = supabase as any;
 
