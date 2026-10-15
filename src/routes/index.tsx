@@ -36,7 +36,7 @@ function Index() {
 
   useEffect(() => {
     let alive = true;
-    supabase.auth.getSession().then(({ data, error }) => {
+    supabase.auth.getSession().then(({ data }) => {
       if (!alive) return;
       setUser(data.session?.user ?? null);
     }).catch(() => { /* O dashboard permanece acessível mesmo sem sessão. */ });
