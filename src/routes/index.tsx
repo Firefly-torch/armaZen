@@ -150,8 +150,7 @@ function Index() {
         let profileRows: AnyRow[] = [];
         if (userIds.length) {
           const profileResult = await db.from("profiles").select("id, email, full_name").in("id", userIds);
-          if (profileResult.error) throw profileResult.error;
-          profileRows = profileResult.data ?? [];
+          if (!profileResult.error) profileRows = profileResult.data ?? [];
         }
         setMembers(memberRows.map((m: AnyRow) => ({ ...m, profiles: profileRows.find(p => p.id === m.user_id) ?? null })));
       } catch (e) { if (!cancelled) fail(e); }
