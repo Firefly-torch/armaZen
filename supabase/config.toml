@@ -1,1 +1,13 @@
-project_id = "ztqvwjdnpnyaktfxvfna"
+project_id = "tqtwptmwkldamhesrorm"
+
+[api]
+enabled = true
+schemas = ["public", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+major_version = 17
+
+[studio]
+enabled = true
