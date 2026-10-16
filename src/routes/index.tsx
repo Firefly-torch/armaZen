@@ -227,7 +227,7 @@ function Index() {
   const [taskForm, setTaskForm] = useState({ id:"", title:"", description:"", type:"recebimento", priority:"media", status:"a_fazer", assignee_id:"", due_at:"", material_id:"", location_id:"" });
   const [memberForm, setMemberForm] = useState({ email:"", role:"operacao" });
   const [exportForm, setExportForm] = useState({ dataset:"materials", format:"csv", template_id:"", template_name:"", delimiter:";", date_format:"ISO" });
-  const [selectedFields, setSelectedFields] = useState<string[]>(datasets.materials!.fields);
+  const [selectedFields, setSelectedFields] = useState<string[]>(datasets["materials"]!.fields);
   const [preview, setPreview] = useState<AnyRow[]>([]);
 
   useEffect(() => { setSelectedFields(datasets[exportForm.dataset]?.fields ?? []); setPreview([]); }, [exportForm.dataset]);
