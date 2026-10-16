@@ -92,10 +92,42 @@ function Index() {
   const [search, setSearch] = useState("");
   const [reload, setReload] = useState(0);
   const [period, setPeriod] = useState("30");
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authMode, setAuthMode] = useState<"signin" | "signup">("signin");
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authError, setAuthError] = useState("");
+  const [authNotice, setAuthNotice] = useState("");
+
 
   const refresh = useCallback(() => setReload(n => n + 1), []);
   const notify = (msg: string) => { setMessage(msg); setDataError(""); };
   const fail = (e: unknown) => { setDataError(errorMessage(e)); setMessage(""); };
+
+  const submitAuth = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setAuthBusy(true); setAuthError(""); setAuthNotice("");
+    try {
+      const email = authEmail.trim();
+      if (!email || !email.includes("@") || !authPassword) throw new Error("Informe um e-mail válido e uma senha.");
+      if (authMode === "signup") {
+        const { data, error } = await supabase.auth.signUp({ email, password: authPassword });
+        if (error) throw error;
+        if (!data.session) {
+          setAuthNotice("Conta solicitada. Para entrar imediatamente na demonstração, desative a confirmação de e-mail em Supabase → Authentication → Sign In / Providers → Email. Depois, tente entrar novamente.");
+        } else {
+          setAuthNotice("Conta criada. Preparando seu ambiente demonstrativo…");
+        }
+      } else {
+        const { error } = await supabase.auth.signInWithPassword({ email, password: authPassword });
+        if (error) throw error;
+      }
+    } catch (e) {
+      setAuthError(errorMessage(e));
+    } finally {
+      setAuthBusy(false);
+    }
+  };
 
   useEffect(() => {
     let alive = true;
@@ -118,7 +150,18 @@ function Index() {
       if (error) throw error;
       if (cancelled) return;
       const row = data?.[0];
-      if (!row) { setDataError("Sua sessão está ativa, mas ainda não existe vínculo com uma organização. Configure a associação de forma segura no Supabase."); return; }
+      if (!row) {
+        const { data: createdOrgId, error: createError } = await db.rpc("create_organization", {
+          _name: "armaZen — Demonstração",
+          _with_demo: true,
+        });
+        if (createError) throw new Error("Não foi possível criar o ambiente demonstrativo. Confirme se as migrações do Supabase foram aplicadas: " + createError.message);
+        if (cancelled) return;
+        const { data: createdOrg, error: orgError } = await db.from("organizations").select("id, name").eq("id", createdOrgId).maybeSingle();
+        if (orgError) throw orgError;
+        setOrgId(createdOrgId); setOrgName(createdOrg?.name ?? "armaZen — Demonstração"); setRole("admin");
+        return;
+      }
       const org = Array.isArray(row.organizations) ? row.organizations[0] : row.organizations;
       setOrgId(row.org_id); setOrgName(org?.name ?? "Organização"); setRole(row.role);
     })().catch(e => { if (!cancelled) fail(e); });
@@ -307,6 +350,25 @@ function Index() {
     <Panel title="Notas de segurança e configuração" description="O protótipo não possui um formulário de login nesta tela, conforme solicitado.">
       <ul className="list-disc space-y-2 pl-5 text-sm text-muted-foreground"><li>O acesso às operações depende de uma sessão Supabase já autenticada e do vínculo com a organização.</li><li>Não é seguro desativar RLS para fazer o dashboard funcionar.</li><li>O primeiro administrador deve ser associado por procedimento seguro no backend; não use senha padrão ou chave service_role no navegador.</li><li>O repositório contém tipos TypeScript para funções transacionais, mas a existência dos tipos não comprova que as migrações estejam aplicadas ao projeto Supabase conectado.</li></ul>
     </Panel>
+  </div>;
+
+  if (!user) return <div className="flex min-h-screen items-center justify-center bg-background px-4 py-10 text-foreground">
+    <div className="w-full max-w-md rounded-2xl border bg-card p-7 shadow-sm">
+      <div className="mb-6 flex items-center gap-3"><div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary text-primary-foreground"><Warehouse className="h-6 w-6"/></div><div><h1 className="text-2xl font-bold">armaZen</h1><p className="text-sm text-muted-foreground">Sistema de gestão de armazém</p></div></div>
+      <h2 className="text-lg font-semibold">{authMode === "signin" ? "Entrar na demonstração" : "Criar acesso demonstrativo"}</h2>
+      <p className="mt-1 text-sm text-muted-foreground">Use uma conta de demonstração ou crie uma com seu e-mail. Cada nova conta recebe sua própria organização de teste com perfil administrador e dados fictícios.</p>
+      <form className="mt-5 grid gap-4" onSubmit={submitAuth}>
+        <Field label="E-mail" value={authEmail} onChange={setAuthEmail} type="email" required placeholder="demo@exemplo.com"/>
+        <Field label="Senha" value={authPassword} onChange={setAuthPassword} type="password" required placeholder="Digite sua senha"/>
+        {authError && <p role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm">{authError}</p>}
+        {authNotice && <p role="status" className="rounded-lg border border-primary/30 bg-primary/5 p-3 text-sm">{authNotice}</p>}
+        <button disabled={authBusy} className="h-11 rounded-lg bg-primary px-4 font-semibold text-primary-foreground disabled:opacity-60">{authBusy ? "Aguarde…" : authMode === "signin" ? "Entrar" : "Criar conta e entrar"}</button>
+      </form>
+      <button className="mt-4 w-full text-sm font-medium underline underline-offset-4" onClick={() => { setAuthMode(authMode === "signin" ? "signup" : "signin"); setAuthError(""); setAuthNotice(""); }}>
+        {authMode === "signin" ? "Não tenho conta — criar acesso" : "Já tenho conta — entrar"}
+      </button>
+      <p className="mt-5 text-xs text-muted-foreground">Modo acadêmico: os registros são fictícios. Em ambiente público, qualquer pessoa poderá criar uma conta e administrar somente sua própria organização demonstrativa. Não utilize dados reais.</p>
+    </div>
   </div>;
 
   const active = nav.find(n=>n.id===section);
