@@ -11,7 +11,19 @@ import { supabase } from "@/integrations/supabase/client";
 import { ensureUserExists } from "@/integrations/supabase/admin-auth";
 import type { User } from "@supabase/supabase-js";
 
-export const Route = createFileRoute("/")({ component: Index });
+export const Route = createFileRoute("/")({
+  component: Index,
+  head: () => ({
+    meta: [
+      { title: "armaZen — Controle de estoque e operações" },
+      { name: "description", content: "Gestão de armazéns, materiais, movimentações, tarefas operacionais e exportações do armaZen." },
+      { property: "og:title", content: "armaZen — Controle de estoque e operações" },
+      { property: "og:description", content: "Consulte estoques, endereços, movimentações e tarefas no sistema de gestão de armazém armaZen." },
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary_large_image" },
+    ],
+  }),
+});
 
 type Section = "dashboard" | "warehouse" | "materials" | "movements" | "tasks" | "exports" | "settings";
 /* eslint-disable @typescript-eslint/no-explicit-any */
