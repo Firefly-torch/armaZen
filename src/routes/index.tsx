@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { createFileRoute } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode, type FormEvent as ReactFormEvent } from "react";
 import * as XLSX from "xlsx";
 import {
   Activity, AlertTriangle, ArrowLeftRight, Boxes, CheckCircle2,
@@ -8,6 +8,7 @@ import {
   ShieldCheck, Warehouse, Pencil, Search, Ban, Check, Users,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import { ensureUserExists } from "@/integrations/supabase/admin-auth";
 import type { User } from "@supabase/supabase-js";
 
 export const Route = createFileRoute("/")({ component: Index });
@@ -68,8 +69,66 @@ const downloadBlob = (blob: Blob, filename: string) => {
   a.href = url; a.download = filename; a.click(); URL.revokeObjectURL(url);
 };
 
+// ── Login screen (accepts any email + any password ≥ 6 chars) ──────────────────
+function LoginScreen({ onLogin }: { onLogin: () => void }) {
+  const [email, setEmail] = useState("demo@armazen.app");
+  const [password, setPassword] = useState("demo123");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  const handleSubmit = async (e: ReactFormEvent) => {
+    e.preventDefault();
+    setBusy(true); setErr("");
+    try {
+      // 1. Use server function to create/update user via admin API (bypasses email confirmation)
+      await ensureUserExists({ data: { email, password } });
+
+      // 2. Sign in — guaranteed to work since user was just created/updated above
+      const { error: signInErr } = await supabase.auth.signInWithPassword({ email, password });
+      if (signInErr) throw signInErr;
+
+      onLogin();
+    } catch (e) {
+      setErr(errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-background px-4">
+      <div className="w-full max-w-sm">
+        <div className="mb-8 text-center">
+          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary text-primary-foreground">
+            <Warehouse className="h-8 w-8" />
+          </div>
+          <h1 className="text-2xl font-bold">armaZen</h1>
+          <p className="mt-1 text-sm text-muted-foreground">Sistema de Gestão de Armazém</p>
+        </div>
+        <form onSubmit={handleSubmit} className="space-y-4 rounded-xl border bg-card p-6 shadow-sm">
+          <h2 className="font-semibold">Entrar no sistema</h2>
+          <p className="text-xs text-muted-foreground">Use qualquer e-mail e senha (mín. 6 caracteres). Se a conta não existir, será criada automaticamente.</p>
+          <Field label="E-mail" value={email} onChange={setEmail} type="email" required />
+          <Field label="Senha" value={password} onChange={setPassword} type="password" required placeholder="mínimo 6 caracteres" />
+          {err && (
+            <div className="rounded-lg bg-destructive/10 p-3 text-xs text-destructive whitespace-pre-wrap">{err}</div>
+          )}
+          <button
+            type="submit"
+            disabled={busy}
+            className="flex h-10 w-full items-center justify-center rounded-lg bg-primary text-sm font-semibold text-primary-foreground disabled:opacity-50"
+          >
+            {busy ? "Entrando…" : "Entrar"}
+          </button>
+        </form>
+        <p className="mt-4 text-center text-xs text-muted-foreground">Protótipo acadêmico · armaZen</p>
+      </div>
+    </div>
+  );
+}
+
 function Index() {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<User | null | undefined>(undefined); // undefined = loading
   const [section, setSection] = useState<Section>("dashboard");
   const [orgId, setOrgId] = useState("");
   const [orgName, setOrgName] = useState("");
@@ -101,13 +160,13 @@ function Index() {
     let alive = true;
     try {
       supabase.auth.getSession().then(({ data }) => { if (alive) setUser(data.session?.user ?? null); })
-        .catch(() => { if (alive) setDataError("Não foi possível verificar a sessão do Supabase."); });
+        .catch(() => { if (alive) { setUser(null); setDataError("Não foi possível verificar a sessão do Supabase."); } });
       const { data } = supabase.auth.onAuthStateChange((_event, session) => {
         setUser(session?.user ?? null);
         if (!session) { setOrgId(""); setOrgName(""); setRole(""); }
       });
       return () => { alive = false; data.subscription.unsubscribe(); };
-    } catch (e) { setDataError(errorMessage(e)); return () => { alive = false; }; }
+    } catch (e) { setDataError(errorMessage(e)); setUser(null); return () => { alive = false; }; }
   }, []);
 
   useEffect(() => {
@@ -118,13 +177,24 @@ function Index() {
       if (error) throw error;
       if (cancelled) return;
       const row = data?.[0];
-      if (!row) { setDataError("Sua sessão está ativa, mas ainda não existe vínculo com uma organização. Configure a associação de forma segura no Supabase."); return; }
+      if (!row) {
+        // No org yet — create one with demo data automatically
+        const { data: orgData, error: orgErr } = await db.rpc("create_organization", { _name: "Empresa Demo", _with_demo: true });
+        if (orgErr) throw orgErr;
+        const newOrgId = orgData as string;
+        setOrgId(newOrgId);
+        setOrgName("Empresa Demo");
+        setRole("gestao");
+        return;
+      }
       const org = Array.isArray(row.organizations) ? row.organizations[0] : row.organizations;
       setOrgId(row.org_id); setOrgName(org?.name ?? "Organização"); setRole(row.role);
     })().catch(e => { if (!cancelled) fail(e); });
     return () => { cancelled = true; };
   }, [user]);
 
+  // All hooks must be called before any conditional return.
+  // This effect was previously placed after a conditional return (violating Rules of Hooks).
   useEffect(() => {
     if (!orgId) return;
     let cancelled = false;
@@ -160,6 +230,21 @@ function Index() {
     return () => { cancelled = true; };
   }, [orgId, reload]);
 
+  // Form state hooks — must be declared before conditional returns
+  const [whForm, setWhForm] = useState({ id:"", code:"", name:"", description:"" });
+  const [levelForm, setLevelForm] = useState({ id:"", warehouse_id:"", name:"", sort_order:"1", is_storage:true });
+  const [locForm, setLocForm] = useState({ id:"", warehouse_id:"", level_id:"", parent_id:"", code:"", name:"", status:"disponivel", capacity:"", capacity_unit:"un", notes:"" });
+  const [matForm, setMatForm] = useState({ id:"", code:"", description:"", category:"Geral", unit:"un", barcode:"", min_stock:"0", status:"ativo", tracks_lot:false, attributes:"{}" });
+  const [moveForm, setMoveForm] = useState({ type:"entrada", material_id:"", quantity:"1", from_location_id:"", to_location_id:"", lot:"", reference:"", reason:"", notes:"" });
+  const [taskForm, setTaskForm] = useState({ id:"", title:"", description:"", type:"recebimento", priority:"media", status:"a_fazer", assignee_id:"", due_at:"", material_id:"", location_id:"" });
+  const [memberForm, setMemberForm] = useState({ email:"", role:"operacao" });
+  const [exportForm, setExportForm] = useState({ dataset:"materials", format:"csv", template_id:"", template_name:"", delimiter:";", date_format:"ISO" });
+  const [selectedFields, setSelectedFields] = useState<string[]>(datasets["materials"]!.fields);
+  const [preview, setPreview] = useState<AnyRow[]>([]);
+
+  useEffect(() => { setSelectedFields(datasets[exportForm.dataset]?.fields ?? []); setPreview([]); }, [exportForm.dataset]);
+
+  // Derived totals — useMemo must be before conditional returns
   const totals = useMemo(() => {
     const balanceByMaterial = new Map<string, number>();
     balances.forEach(b => balanceByMaterial.set(b.material_id, (balanceByMaterial.get(b.material_id) ?? 0) + Number(b.quantity || 0)));
@@ -176,6 +261,25 @@ function Index() {
       divergences: counts.filter(c => Number(c.difference) !== 0).length,
     };
   }, [materials, locations, balances, movements, tasks, counts, period]);
+
+  // Show loading splash while checking session
+  if (user === undefined) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <div className="text-center">
+          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary text-primary-foreground">
+            <Warehouse className="h-8 w-8" />
+          </div>
+          <p className="text-sm text-muted-foreground">Carregando…</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Not authenticated — show login screen
+  if (user === null) {
+    return <LoginScreen onLogin={() => {}} />;
+  }
 
   const canOperate = Boolean(user && orgId && role !== "consulta");
   const canManage = role === "gestao";
@@ -216,21 +320,7 @@ function Index() {
       <Panel title="Movimentações recentes" description="Últimos registros persistidos."><Table headers={["Nº","Tipo","Material","Quantidade","Data"]} rows={movements.slice(0,6).map(m => [pretty(m.number), statusPill(m.type), pretty(materials.find(x=>x.id===m.material_id)?.code), pretty(m.quantity), dateLabel(m.created_at)])} /></Panel>
       <Panel title="Tarefas prioritárias" description="Tarefas abertas, incluindo prazos vencidos."><Table headers={["Tarefa","Prioridade","Status","Prazo"]} rows={tasks.filter(t=>t.status!=="concluida").sort((a,b)=>Number(new Date(a.due_at||"9999").getTime())-Number(new Date(b.due_at||"9999").getTime())).slice(0,6).map(t=>[t.title,statusPill(t.priority),statusPill(t.status),dateLabel(t.due_at)])} /></Panel>
     </div>
-    {!user && <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 text-sm"><strong>Sessão não identificada.</strong> A página abre diretamente no dashboard, conforme solicitado, mas operações e dados por organização exigem uma sessão Supabase já autenticada. Nenhuma tela de login foi adicionada e nenhuma gravação é simulada.</div>}
   </div>;
-
-  const [whForm, setWhForm] = useState({ id:"", code:"", name:"", description:"" });
-  const [levelForm, setLevelForm] = useState({ id:"", warehouse_id:"", name:"", sort_order:"1", is_storage:true });
-  const [locForm, setLocForm] = useState({ id:"", warehouse_id:"", level_id:"", parent_id:"", code:"", name:"", status:"disponivel", capacity:"", capacity_unit:"un", notes:"" });
-  const [matForm, setMatForm] = useState({ id:"", code:"", description:"", category:"Geral", unit:"un", barcode:"", min_stock:"0", status:"ativo", tracks_lot:false, attributes:"{}" });
-  const [moveForm, setMoveForm] = useState({ type:"entrada", material_id:"", quantity:"1", from_location_id:"", to_location_id:"", lot:"", reference:"", reason:"", notes:"" });
-  const [taskForm, setTaskForm] = useState({ id:"", title:"", description:"", type:"recebimento", priority:"media", status:"a_fazer", assignee_id:"", due_at:"", material_id:"", location_id:"" });
-  const [memberForm, setMemberForm] = useState({ email:"", role:"operacao" });
-  const [exportForm, setExportForm] = useState({ dataset:"materials", format:"csv", template_id:"", template_name:"", delimiter:";", date_format:"ISO" });
-  const [selectedFields, setSelectedFields] = useState<string[]>(datasets["materials"]!.fields);
-  const [preview, setPreview] = useState<AnyRow[]>([]);
-
-  useEffect(() => { setSelectedFields(datasets[exportForm.dataset]?.fields ?? []); setPreview([]); }, [exportForm.dataset]);
 
   const warehouseSection = <div className="space-y-5">
     <Panel title="Armazéns" description="Cadastre instalações genéricas. Desativar preserva vínculos e histórico.">
@@ -317,12 +407,11 @@ function Index() {
       <div className="hidden border-t border-[var(--sidebar-border)] p-4 text-xs text-[var(--sidebar-muted)] md:block">Protótipo acadêmico · armaZen</div>
     </aside>
     <main className="min-w-0 flex-1 md:ml-64">
-      <header className="flex flex-wrap items-center justify-between gap-3 border-b bg-card px-5 py-4 sm:px-8"><div><p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Operação / {active?.label}</p><h1 className="mt-1 text-xl font-semibold">{section==="dashboard"?"Visão geral da operação":active?.label}</h1></div><div className="text-right"><p className="text-sm font-medium">{orgName||"Organização não identificada"}</p><p className="text-xs capitalize text-muted-foreground">{role||"Sessão / perfil não identificado"}</p></div></header>
+      <header className="flex flex-wrap items-center justify-between gap-3 border-b bg-card px-5 py-4 sm:px-8"><div><p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Operação / {active?.label}</p><h1 className="mt-1 text-xl font-semibold">{section==="dashboard"?"Visão geral da operação":active?.label}</h1></div><div className="flex items-center gap-4"><div className="text-right"><p className="text-sm font-medium">{orgName||"Organização não identificada"}</p><p className="text-xs capitalize text-muted-foreground">{role||"Sessão / perfil não identificado"}</p></div><button onClick={()=>void supabase.auth.signOut()} className="h-9 rounded-lg border px-3 text-xs font-medium text-muted-foreground hover:bg-muted" title="Sair">Sair</button></div></header>
       <div className="space-y-4 p-5 sm:p-8">
         {message&&<div role="status" className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3 text-sm">{message}</div>}
         {dataError&&<div role="alert" className="flex items-start gap-3 rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm"><AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-destructive"/><div className="flex-1">{dataError}</div><button onClick={()=>{setDataError("");refresh();}} className="font-medium underline">Tentar novamente</button></div>}
         {loading&&<p className="text-sm text-muted-foreground">Atualizando dados do Supabase…</p>}
-        {!orgId&&<div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm">Sem organização identificada: os formulários de gravação ficam bloqueados e nenhum dado fictício é apresentado como real.</div>}
         {section==="dashboard"&&dashboard}
         {section==="warehouse"&&warehouseSection}
         {section==="materials"&&materialsSection}
