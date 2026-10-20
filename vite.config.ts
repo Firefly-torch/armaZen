@@ -14,10 +14,10 @@ const viteOverrides =
           },
         },
       }
-    : {};
+    : undefined;
 
 export default defineConfig({
-  ...({ vite: viteOverrides } as Record<string, unknown>),
+  ...(viteOverrides ? { vite: viteOverrides } : {}),
   tanstackStart: {
     // Redirect TanStack Start's bundled server entry to src/server.ts (our SSR error wrapper).
     // nitro/vite builds from this
