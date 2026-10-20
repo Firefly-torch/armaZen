@@ -1,12 +1,13 @@
 // Server-only: creates or ensures a user exists, bypassing email confirmation.
 // Uses the service role key — never import this in client code.
 import { createServerFn } from "@tanstack/react-start";
-import { supabaseAdmin } from "./client.server";
+import { createSupabaseAdminClient } from "./client.server";
 
 export const ensureUserExists = createServerFn({ method: "POST" })
   .validator((data: { email: string; password: string }) => data)
   .handler(async ({ data }) => {
     const { email, password } = data;
+    const supabaseAdmin = await createSupabaseAdminClient();
 
     // Try to create the user. If they already exist, update their password instead.
     const { data: created, error: createErr } = await supabaseAdmin.auth.admin.createUser({
