@@ -8,10 +8,23 @@ import {
   Scripts,
   type ErrorComponentProps,
 } from "@tanstack/react-router";
+import { createServerFn } from "@tanstack/react-start";
 import { useEffect, type ReactNode } from "react";
 
 import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
+import { setSupabaseRuntimeConfig } from "@/integrations/supabase/client";
+
+// Public values only. The service-role key is deliberately never returned here.
+const getPublicSupabaseConfig = createServerFn({ method: "GET" }).handler(async () => {
+  const { serverEnv } = await import("@/lib/env.server");
+  const url = serverEnv("SUPABASE_URL") || import.meta.env["VITE_SUPABASE_URL"];
+  const publishableKey =
+    serverEnv("SUPABASE_PUBLISHABLE_KEY") ||
+    import.meta.env["VITE_SUPABASE_PUBLISHABLE_KEY"];
+
+  return { url, publishableKey };
+});
 
 function NotFoundComponent() {
   return (
@@ -63,7 +76,7 @@ function ErrorComponent({ error, reset }: ErrorComponentProps) {
           </button>
           <a
             href="/"
-            className="inline-flex items-center justify-center rounded-md border border-input bg-background px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-accent"
+            className="inline-flex items-center justify-center rounded-md border border-input bg-background px-4 py-2 text-sm font-medium text-foreground hover:bg-accent"
           >
             Go home
           </a>
@@ -74,6 +87,7 @@ function ErrorComponent({ error, reset }: ErrorComponentProps) {
 }
 
 export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()({
+  loader: () => getPublicSupabaseConfig(),
   head: () => ({
     meta: [
       { charSet: "utf-8" },
@@ -117,6 +131,11 @@ function RootShell({ children }: { children: ReactNode }) {
 
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
+  const publicSupabaseConfig = Route.useLoaderData();
+
+  // Set the public runtime config before nested route effects initialize Supabase.
+  // This avoids relying exclusively on VITE_* values baked into the build bundle.
+  setSupabaseRuntimeConfig(publicSupabaseConfig);
 
   return (
     <QueryClientProvider client={queryClient}>
