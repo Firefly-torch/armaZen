@@ -17,10 +17,10 @@ import { setSupabaseRuntimeConfig } from "@/integrations/supabase/client";
 
 // Public values only. The service-role key is deliberately never returned here.
 const getPublicSupabaseConfig = createServerFn({ method: "GET" }).handler(async () => {
-  const { serverEnv } = await import("@/lib/env.server");
-  const url = serverEnv("SUPABASE_URL") || import.meta.env["VITE_SUPABASE_URL"];
+  const { serverRuntimeEnv } = await import("@/lib/runtime-env.server");
+  const url = (await serverRuntimeEnv("SUPABASE_URL")) || import.meta.env["VITE_SUPABASE_URL"];
   const publishableKey =
-    serverEnv("SUPABASE_PUBLISHABLE_KEY") ||
+    (await serverRuntimeEnv("SUPABASE_PUBLISHABLE_KEY")) ||
     import.meta.env["VITE_SUPABASE_PUBLISHABLE_KEY"];
 
   return { url, publishableKey };
