@@ -7,6 +7,8 @@ type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
 };
 
+type RuntimeEnv = Record<string, string | undefined>;
+
 let serverEntryPromise: Promise<ServerEntry> | undefined;
 
 async function getServerEntry(): Promise<ServerEntry> {
@@ -46,6 +48,15 @@ function isH3SwallowedErrorBody(body: string): boolean {
 
 export default {
   async fetch(request: Request, env: unknown, ctx: unknown) {
+    // This custom entry wraps TanStack Start's server entry, so explicitly expose
+    // the Worker bindings to serverEnv() before any middleware/server function runs.
+    // Cloudflare bindings are stable for this Worker isolate; Node/Vite preview has
+    // no env argument and continues to use process.env.
+    if (env !== null && typeof env === "object") {
+      (globalThis as typeof globalThis & { __env__?: RuntimeEnv }).__env__ =
+        env as unknown as RuntimeEnv;
+    }
+
     try {
       const handler = await getServerEntry();
       const response = await handler.fetch(request, env, ctx);
