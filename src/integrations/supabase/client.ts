@@ -4,6 +4,25 @@ import type { Database } from './types';
 import { brokeredPreviewStorage } from './previewAuthStorage';
 import { serverEnv } from '@/lib/env.server';
 
+export type SupabaseRuntimeConfig = {
+  url?: string;
+  publishableKey?: string;
+};
+
+let runtimePublicConfig: SupabaseRuntimeConfig | undefined;
+
+/**
+ * Called by the root route with public values fetched from a server function.
+ * The URL and publishable key are public browser configuration; never pass
+ * SUPABASE_SERVICE_ROLE_KEY through this API.
+ */
+export function setSupabaseRuntimeConfig(config: SupabaseRuntimeConfig): void {
+  runtimePublicConfig = {
+    url: config.url || runtimePublicConfig?.url,
+    publishableKey: config.publishableKey || runtimePublicConfig?.publishableKey,
+  };
+}
+
 function isNewSupabaseApiKey(value: string): boolean {
   return value.startsWith('sb_publishable_') || value.startsWith('sb_secret_');
 }
@@ -11,13 +30,13 @@ function isNewSupabaseApiKey(value: string): boolean {
 // The public URL can be reachable only from the browser, so server requests go to the runtime URL of the same backend.
 function serverSupabaseUrl(publicUrl: string, supabaseKey: string): string | undefined {
   if (typeof window !== 'undefined' || typeof process === 'undefined') return undefined;
-  const serverUrl = serverEnv('SUPABASE_URL')?.replace(/\/+$/, '');
+  const serverUrl = serverEnv('SUPABASE_URL')?.replace(/\\/+$/, '');
   if (!serverUrl || serverUrl === publicUrl || serverEnv('SUPABASE_PUBLISHABLE_KEY') !== supabaseKey) return undefined;
   return serverUrl;
 }
 
 function createSupabaseFetch(supabaseUrl: string, supabaseKey: string): typeof fetch {
-  const publicUrl = supabaseUrl.replace(/\/+$/, '');
+  const publicUrl = supabaseUrl.replace(/\\/+$/, '');
   const serverUrl = serverSupabaseUrl(publicUrl, supabaseKey);
   return (input, init) => {
     const headers = new Headers(
@@ -48,10 +67,16 @@ function createSupabaseFetch(supabaseUrl: string, supabaseKey: string): typeof f
 
 
 function createSupabaseClient() {
-  // Use import.meta.env for client-side (Vite build-time replacement)
-  // Fall back to process.env for SSR (server-side rendering)
-  const SUPABASE_URL = import.meta.env['VITE_SUPABASE_URL'] || serverEnv('SUPABASE_URL');
-  const SUPABASE_PUBLISHABLE_KEY = import.meta.env['VITE_SUPABASE_PUBLISHABLE_KEY'] || serverEnv('SUPABASE_PUBLISHABLE_KEY');
+  // Runtime public configuration supplied by the server is preferred; VITE_*
+  // remains a build-time fallback for deployments that already inject it.
+  const SUPABASE_URL =
+    runtimePublicConfig?.url ||
+    import.meta.env['VITE_SUPABASE_URL'] ||
+    serverEnv('SUPABASE_URL');
+  const SUPABASE_PUBLISHABLE_KEY =
+    runtimePublicConfig?.publishableKey ||
+    import.meta.env['VITE_SUPABASE_PUBLISHABLE_KEY'] ||
+    serverEnv('SUPABASE_PUBLISHABLE_KEY');
 
   if (!SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) {
     const missing = [
@@ -77,7 +102,7 @@ function createSupabaseClient() {
 
 let _supabase: ReturnType<typeof createSupabaseClient> | undefined;
 
-// Import the supabase client like this:
+// Import the Supabase client like this:
 // import { supabase } from "@/integrations/supabase/client";
 export const supabase = new Proxy({} as ReturnType<typeof createSupabaseClient>, {
   get(_, prop, receiver) {
