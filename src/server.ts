@@ -54,7 +54,7 @@ export default {
     // no env argument and continues to use process.env.
     if (env !== null && typeof env === "object") {
       (globalThis as typeof globalThis & { __env__?: RuntimeEnv }).__env__ =
-        env as RuntimeEnv;
+        env as unknown as RuntimeEnv;
     }
 
     try {
