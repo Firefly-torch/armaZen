@@ -256,7 +256,7 @@ function Index() {
   const [mapParentId, setMapParentId] = useState("");
   const [mapSelectedLocationId, setMapSelectedLocationId] = useState("");
   const [selectedInventoryId, setSelectedInventoryId] = useState("");
-  const [inventoryForm, setInventoryForm] = useState({ warehouse_id: "", description: "" });
+  const [inventoryForm, setInventoryForm] = useState({ warehouse_id: "todos", description: "" });
   const [attributeForm, setAttributeForm] = useState({ id: "", key: "", label: "", data_type: "text", required: false });
   const [attributeValues, setAttributeValues] = useState<Record<string, string>>({});
 
@@ -696,7 +696,7 @@ function Index() {
       {!inventorySessions.length?<Empty>Nenhum inventário registrado. Crie uma sessão acima para começar.</Empty>:null}
       {selectedInventory&&selectedInventory.status==="em_andamento"&&canOperate&&<div className="mt-4 border-t pt-4"><h3 className="mb-3 text-sm font-semibold">Registrar contagem física</h3><AdjustmentForm countId={selectedInventory.id} warehouseId={selectedInventory.warehouse_id} orgId={orgId} materials={materials} locations={locations} saving={saving} onSave={runSave} onDone={refresh}/></div>}
       {selectedInventory&&selectedInventory.status==="concluido"&&<p className="mt-4 rounded-lg bg-muted p-3 text-sm text-muted-foreground">Esta sessão foi concluída e não aceita novas contagens.</p>}
-      {selectedInventory&&selectedInventory.status==="em_andamento"&&canOperate&&<div className="mt-4 flex justify-end"><button type="button" disabled={saving} onClick={()=>void runSave(async()=>{const {data,error}=await db.from("inventory_counts").update({status:"concluido",completed_at:new Date().toISOString()}).eq("id",selectedInventory.id).eq("org_id",orgId).eq("status","em_andamento").select("id").single();if(error||!data)throw error??new Error("Não foi possível concluir o inventário.");},"Inventário concluído. O histórico foi preservado.")} className="rounded-lg border border-primary/40 px-4 py-2 text-sm font-semibold text-primary disabled:opacity-50"><Check className="mr-2 inline h-4 w-4"/>Concluir inventário</button></div>}
+      {selectedInventory&&selectedInventory.status==="em_andamento"&&canOperate&&(canManage||selectedInventory.created_by===user?.id)&&<div className="mt-4 flex justify-end"><button type="button" disabled={saving} onClick={()=>void runSave(async()=>{const {data,error}=await db.from("inventory_counts").update({status:"concluido",completed_at:new Date().toISOString()}).eq("id",selectedInventory.id).eq("org_id",orgId).eq("status","em_andamento").select("id").single();if(error||!data)throw error??new Error("Não foi possível concluir o inventário.");},"Inventário concluído. O histórico foi preservado.")} className="rounded-lg border border-primary/40 px-4 py-2 text-sm font-semibold text-primary disabled:opacity-50"><Check className="mr-2 inline h-4 w-4"/>Concluir inventário</button></div>}
     </Panel>
 
     {selectedInventory&&<Panel title="Contagens registradas" description="O saldo esperado, a quantidade contada e a diferença ficam vinculados à sessão.">
