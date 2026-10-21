@@ -178,6 +178,13 @@ begin
     raise exception 'Sem permissão para gerenciar usuários.';
   end if;
 
+  -- The public demonstration workspace must never absorb real user accounts.
+  if exists (
+    select 1 from public.demo_workspace_registry where org_id = _org
+  ) then
+    raise exception 'A equipe do ambiente demonstrativo é fixa e não aceita usuários externos.';
+  end if;
+
   select id, raw_app_meta_data ->> 'armaZenDemoRole'
     into uid, v_demo_role
     from auth.users
