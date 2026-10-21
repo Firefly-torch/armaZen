@@ -25,10 +25,13 @@ create policy "operacao insert inventory counts"
 drop policy if exists "operacao update inventory counts" on public.inventory_counts;
 create policy "operacao update inventory counts"
   on public.inventory_counts for update to authenticated
-  using (public.has_org_role(org_id, 'operacao'))
+  using (
+    public.has_org_role(org_id, 'gestao')
+    or (public.has_org_role(org_id, 'operacao') and created_by = auth.uid())
+  )
   with check (
-    public.has_org_role(org_id, 'operacao')
-    and (created_by = auth.uid() or public.has_org_role(org_id, 'gestao'))
+    public.has_org_role(org_id, 'gestao')
+    or (public.has_org_role(org_id, 'operacao') and created_by = auth.uid())
   );
 
 -- Serialize inventory counting per count session and prevent duplicate scans
