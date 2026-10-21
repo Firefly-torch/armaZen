@@ -254,29 +254,46 @@ returns uuid
 language plpgsql
 security definer
 set search_path = public
-as $
+as $orgfn$
 declare
   oid uuid;
   v_demo_role text;
 begin
-  if auth.uid() is null then raise exception 'Não autenticado.'; end if;
+  if auth.uid() is null then
+    raise exception 'Não autenticado.';
+  end if;
 
-  select raw_app_meta_data ->> 'armaZenDemoRole' into v_demo_role
-    from auth.users where id = auth.uid();
+  select raw_app_meta_data ->> 'armaZenDemoRole'
+    into v_demo_role
+    from auth.users
+    where id = auth.uid();
+
   if v_demo_role is not null then
     raise exception 'As contas de demonstração usam uma organização compartilhada e não podem criar outra organização.';
   end if;
 
-  if (select count(*) from public.organization_members where user_id = auth.uid() and role = 'gestao') >= 5 then
+  if (
+    select count(*)
+    from public.organization_members
+    where user_id = auth.uid() and role = 'gestao'
+  ) >= 5 then
     raise exception 'Limite de organizações atingido.';
   end if;
 
-  insert into public.organizations(name) values (trim(_name)) returning id into oid;
-  insert into public.organization_members(org_id, user_id, role) values (oid, auth.uid(), 'gestao');
-  if _with_demo then perform public._seed_demo(oid, auth.uid()); end if;
+  insert into public.organizations(name)
+  values (trim(_name))
+  returning id into oid;
+
+  insert into public.organization_members(org_id, user_id, role)
+  values (oid, auth.uid(), 'gestao');
+
+  if _with_demo then
+    perform public._seed_demo(oid, auth.uid());
+  end if;
+
   return oid;
 end;
-$;
+$orgfn$;
 
 -- Store the reserved demo workspace by immutable id instead of looking it up
 -- by a user-editable organization name.
