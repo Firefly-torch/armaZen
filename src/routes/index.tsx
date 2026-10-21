@@ -181,6 +181,8 @@ function Index() {
   const [templates, setTemplates] = useState<AnyRow[]>([]);
   const [history, setHistory] = useState<AnyRow[]>([]);
   const [counts, setCounts] = useState<AnyRow[]>([]);
+  const [inventorySessions, setInventorySessions] = useState<AnyRow[]>([]);
+  const [materialAttributes, setMaterialAttributes] = useState<AnyRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
@@ -188,6 +190,14 @@ function Index() {
   const [search, setSearch] = useState("");
   const [reload, setReload] = useState(0);
   const [period, setPeriod] = useState("30");
+  const [dashboardWarehouseId, setDashboardWarehouseId] = useState("todos");
+  const [mapWarehouseId, setMapWarehouseId] = useState("");
+  const [mapParentId, setMapParentId] = useState("");
+  const [mapSelectedLocationId, setMapSelectedLocationId] = useState("");
+  const [selectedInventoryId, setSelectedInventoryId] = useState("");
+  const [inventoryForm, setInventoryForm] = useState({ warehouse_id: "", description: "" });
+  const [attributeForm, setAttributeForm] = useState({ key: "", label: "", data_type: "text", required: false });
+  const [attributeValues, setAttributeValues] = useState<Record<string, string>>({});
 
   const refresh = useCallback(() => setReload(n => n + 1), []);
   const notify = (msg: string) => { setMessage(msg); setDataError(""); };
@@ -215,13 +225,11 @@ function Index() {
       if (cancelled) return;
       const row = data?.[0];
       if (!row) {
-        // No org yet — create one with demo data automatically
-        const { data: orgData, error: orgErr } = await db.rpc("create_organization", { _name: "Empresa Demo", _with_demo: true });
-        if (orgErr) throw orgErr;
-        const newOrgId = orgData as string;
-        setOrgId(newOrgId);
-        setOrgName("Empresa Demo");
-        setRole("gestao");
+        // Never silently create an organization or elevate an unlinked user to Gestão.
+        setOrgId("");
+        setOrgName("");
+        setRole("");
+        setDataError("Esta conta não está vinculada a uma organização. Entre por um dos três perfis de demonstração.");
         return;
       }
       const org = Array.isArray(row.organizations) ? row.organizations[0] : row.organizations;
@@ -242,7 +250,9 @@ function Index() {
         const results = await Promise.all([
           get("warehouses"), get("location_levels", "sort_order"), get("locations"), get("materials"),
           get("inventory_balances", "updated_at"), get("stock_movements"), get("tasks"),
-          get("export_templates"), get("export_history"), get("inventory_count_items"),
+          get("export_templates"),
+          role === "gestao" ? get("export_history") : Promise.resolve({ data: [], error: null }),
+          get("inventory_count_items"), get("inventory_counts"), get("material_attributes"),
           db.from("organization_members").select("id, user_id, role, created_at").eq("org_id", orgId).order("created_at", { ascending: true }),
         ]);
         const failed = results.find((r: AnyRow) => r.error);
@@ -252,7 +262,9 @@ function Index() {
         setMaterials(results[3].data ?? []); setBalances(results[4].data ?? []); setMovements(results[5].data ?? []);
         setTasks(results[6].data ?? []); setTemplates(results[7].data ?? []); setHistory(results[8].data ?? []);
         setCounts(results[9].data ?? []);
-        const memberRows = results[10].data ?? [];
+        setInventorySessions(results[10].data ?? []);
+        setMaterialAttributes(results[11].data ?? []);
+        const memberRows = results[12].data ?? [];
         const userIds = memberRows.map((m: AnyRow) => m.user_id);
         let profileRows: AnyRow[] = [];
         if (userIds.length) {
@@ -265,7 +277,7 @@ function Index() {
     };
     void load();
     return () => { cancelled = true; };
-  }, [orgId, reload]);
+  }, [orgId, reload, role]);
 
   // Form state hooks — must be declared before conditional returns
   const [whForm, setWhForm] = useState({ id:"", code:"", name:"", description:"" });
