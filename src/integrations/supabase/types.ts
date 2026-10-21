@@ -280,27 +280,33 @@ export type Database = {
       }
       inventory_counts: {
         Row: {
+          completed_at: string | null
           created_at: string
           created_by: string
           description: string | null
           id: string
           org_id: string
+          status: string
           warehouse_id: string | null
         }
         Insert: {
+          completed_at?: string | null
           created_at?: string
           created_by: string
           description?: string | null
           id?: string
           org_id: string
+          status?: string
           warehouse_id?: string | null
         }
         Update: {
+          completed_at?: string | null
           created_at?: string
           created_by?: string
           description?: string | null
           id?: string
           org_id?: string
+          status?: string
           warehouse_id?: string | null
         }
         Relationships: [
@@ -912,6 +918,10 @@ export type Database = {
         Returns: boolean
       }
       is_org_member: { Args: { _org: string }; Returns: boolean }
+      ensure_demo_workspace: {
+        Args: { _consulta: string; _gestao: string; _operacao: string }
+        Returns: string
+      }
       load_demo_data: { Args: { _org: string }; Returns: undefined }
       register_adjustment: {
         Args: {
