@@ -238,6 +238,7 @@ function Index() {
   const [tasks, setTasks] = useState<AnyRow[]>([]);
   const [templates, setTemplates] = useState<AnyRow[]>([]);
   const [history, setHistory] = useState<AnyRow[]>([]);
+  const [auditLogs, setAuditLogs] = useState<AnyRow[]>([]);
   const [counts, setCounts] = useState<AnyRow[]>([]);
   const [inventorySessions, setInventorySessions] = useState<AnyRow[]>([]);
   const [materialAttributes, setMaterialAttributes] = useState<AnyRow[]>([]);
@@ -312,6 +313,7 @@ function Index() {
           get("inventory_balances", "updated_at"), get("stock_movements"), get("tasks"),
           get("export_templates"),
           role === "gestao" ? get("export_history") : Promise.resolve({ data: [], error: null }),
+          role === "gestao" ? get("audit_logs") : Promise.resolve({ data: [], error: null }),
           get("inventory_count_items"), get("inventory_counts"), get("material_attributes"),
           db.from("organization_members").select("id, user_id, role, created_at").eq("org_id", orgId).order("created_at", { ascending: true }),
         ]);
@@ -321,10 +323,11 @@ function Index() {
         setWarehouses(results[0].data ?? []); setLevels(results[1].data ?? []); setLocations(results[2].data ?? []);
         setMaterials(results[3].data ?? []); setBalances(results[4].data ?? []); setMovements(results[5].data ?? []);
         setTasks(results[6].data ?? []); setTemplates(results[7].data ?? []); setHistory(results[8].data ?? []);
-        setCounts(results[9].data ?? []);
-        setInventorySessions(results[10].data ?? []);
-        setMaterialAttributes(results[11].data ?? []);
-        const memberRows = results[12].data ?? [];
+        setAuditLogs(results[9].data ?? []);
+        setCounts(results[10].data ?? []);
+        setInventorySessions(results[11].data ?? []);
+        setMaterialAttributes(results[12].data ?? []);
+        const memberRows = results[13].data ?? [];
         const userIds = memberRows.map((m: AnyRow) => m.user_id);
         let profileRows: AnyRow[] = [];
         if (userIds.length) {
@@ -759,6 +762,10 @@ function Index() {
         <div className="flex items-end justify-between gap-3"><label className="flex h-10 items-center gap-2 text-sm"><input type="checkbox" checked={attributeForm.required} onChange={event=>setAttributeForm({...attributeForm,required:event.target.checked})}/> Obrigatório</label><div className="flex gap-2"><button type="button" className="h-10 rounded-lg border px-3 text-sm" hidden={!attributeForm.id} onClick={()=>setAttributeForm({id:"",key:"",label:"",data_type:"text",required:false})}>Cancelar</button><button className="h-10 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground" disabled={saving}><Plus className="mr-2 inline h-4 w-4"/>{attributeForm.id?"Salvar campo":"Adicionar campo"}</button></div></div>
       </form>
       <Table headers={["Chave","Nome","Tipo","Obrigatório","Ações"]} rows={materialAttributes.map(attribute=>[attribute.key,attribute.label,attribute.data_type,attribute.required?"Sim":"Não",<div className="flex gap-2"><button type="button" title="Editar campo" className="rounded-md border px-2 py-2" onClick={()=>setAttributeForm({id:attribute.id,key:attribute.key,label:attribute.label,data_type:attribute.data_type,required:attribute.required})}><Pencil className="h-3.5 w-3.5"/></button><button type="button" title="Excluir campo" className="rounded-md border px-2 py-2 hover:bg-destructive/5" onClick={()=>{if(!window.confirm(`Excluir a configuração do campo "${attribute.label}"? Os valores já gravados nos materiais serão preservados.`))return;void runSave(async()=>{const {error}=await db.from("material_attributes").delete().eq("id",attribute.id).eq("org_id",orgId);if(error)throw error;if(attributeForm.id===attribute.id)setAttributeForm({id:"",key:"",label:"",data_type:"text",required:false});},"Configuração removida; valores históricos preservados.");}}><Ban className="h-3.5 w-3.5"/></button></div>])}/>
+    </Panel>
+    <Panel title="Auditoria da organização" description="Ações relevantes registradas pelo banco; somente Gestão pode consultar estes registros.">
+      <Table headers={["Data","Ação","Entidade","Registro","Usuário"]} rows={auditLogs.slice(0,30).map(log=>[new Date(log.created_at).toLocaleString("pt-BR"),pretty(log.action),pretty(log.entity),pretty(log.entity_id),members.find(member=>member.user_id===log.user_id)?.profiles?.email??(log.user_id?"Usuário sem perfil carregado":"Sistema")])}/>
+      <p className="mt-2 text-xs text-muted-foreground">Exibindo até 30 eventos mais recentes carregados. O conteúdo detalhado dos registros permanece no banco para rastreabilidade.</p>
     </Panel>
     <Panel title="Notas de segurança e configuração" description="Ambiente demonstrativo com perfis isolados e dados fictícios.">
       <ul className="list-disc space-y-2 pl-5 text-sm text-muted-foreground"><li>Consulta, Operação e Gestão usam contas demonstrativas distintas no mesmo ambiente de dados fictícios.</li><li>As permissões são verificadas pelo Supabase Auth e pelas políticas RLS do banco; ocultar botões não substitui a segurança do backend.</li><li>A chave service_role permanece exclusivamente no servidor e nunca é enviada ao navegador.</li><li>A nova migração de perfis demonstrativos e inventário precisa ser aplicada ao projeto Supabase antes de usar os três acessos pela primeira vez.</li></ul>
