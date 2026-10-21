@@ -1,14 +1,14 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { createFileRoute } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useState, type ReactNode, type FormEvent as ReactFormEvent } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import * as XLSX from "xlsx";
 import {
-  Activity, AlertTriangle, ArrowLeftRight, Boxes, CheckCircle2,
+  Activity, AlertTriangle, ArrowLeftRight, Boxes, CheckCircle2, ClipboardCheck,
   ClipboardList, Download, LayoutDashboard, MapPinned, Package, Plus, RefreshCw,
   ShieldCheck, Warehouse, Pencil, Search, Ban, Check, Users,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
-import { ensureUserExists } from "@/integrations/supabase/admin-auth";
+import { startDemoSession, type DemoRole } from "@/integrations/supabase/admin-auth";
 import type { User } from "@supabase/supabase-js";
 
 export const Route = createFileRoute("/")({
@@ -25,7 +25,7 @@ export const Route = createFileRoute("/")({
   }),
 });
 
-type Section = "dashboard" | "warehouse" | "materials" | "movements" | "tasks" | "exports" | "settings";
+type Section = "dashboard" | "warehouse" | "materials" | "movements" | "inventory" | "tasks" | "exports" | "settings";
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type AnyRow = any; // untyped database rows in this prototype; keeps dot access allowed
 const db = supabase as any;
@@ -35,6 +35,7 @@ const nav: { id: Section; label: string; icon: typeof Boxes }[] = [
   { id: "warehouse", label: "Armazém e endereçamento", icon: Warehouse },
   { id: "materials", label: "Materiais e estoque", icon: Package },
   { id: "movements", label: "Movimentações", icon: ArrowLeftRight },
+  { id: "inventory", label: "Inventário", icon: ClipboardCheck },
   { id: "tasks", label: "Tarefas operacionais", icon: ClipboardList },
   { id: "exports", label: "Exportação para ERP", icon: Download },
   { id: "settings", label: "Usuários e configurações", icon: ShieldCheck },
@@ -43,6 +44,11 @@ const movementTypes = ["entrada", "saida", "transferencia", "ajuste"] as const;
 const taskTypes = ["recebimento", "conferencia", "armazenagem", "separacao", "transferencia", "inventario", "expedicao"];
 const taskStatuses = ["a_fazer", "em_andamento", "aguardando", "concluida"];
 const priorities = ["baixa", "media", "alta", "urgente"];
+const reservedDemoEmails = new Set([
+  "demo.consulta@armazen.app",
+  "demo.operacao@armazen.app",
+  "demo.gestao@armazen.app",
+]);
 const locationStatuses = ["disponivel", "bloqueado", "reservado"];
 const datasets: Record<string, { label: string; table: string; fields: string[] }> = {
   materials: { label: "Materiais", table: "materials", fields: ["code", "description", "category", "unit", "barcode", "min_stock", "status", "tracks_lot", "created_at"] },
@@ -51,6 +57,14 @@ const datasets: Record<string, { label: string; table: string; fields: string[] 
   movements: { label: "Movimentações", table: "stock_movements", fields: ["number", "type", "created_at", "material_id", "quantity", "from_location_id", "to_location_id", "lot", "reason", "reference", "notes", "user_id"] },
   counts: { label: "Inventário", table: "inventory_count_items", fields: ["count_id", "material_id", "location_id", "lot", "expected_qty", "counted_qty", "difference", "reason", "created_at", "user_id"] },
   tasks: { label: "Tarefas", table: "tasks", fields: ["title", "description", "type", "priority", "status", "assignee_id", "due_at", "material_id", "location_id", "created_at"] },
+};
+const mandatoryExportFields: Record<string, string[]> = {
+  materials: ["code", "description", "category", "unit"],
+  balances: ["material_id", "location_id", "quantity"],
+  locations: ["code", "name", "warehouse_id"],
+  movements: ["type", "material_id", "quantity"],
+  counts: ["count_id", "material_id", "location_id", "counted_qty", "reason"],
+  tasks: ["title", "type", "status"],
 };
 
 function Field({ label, value, onChange, type = "text", required = false, placeholder, min, step }: {
@@ -69,71 +83,140 @@ function Panel({ title, description, children, action }: { title: string; descri
 function Empty({ children = "Nenhum registro encontrado." }: { children?: ReactNode }) {
   return <p className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">{children}</p>;
 }
-function Table({ headers, rows }: { headers: string[]; rows: ReactNode[][] }) {
+function Table({ headers, rows, pageSize = 10 }: { headers: string[]; rows: ReactNode[][]; pageSize?: number }) {
+  const [page, setPage] = useState(0);
   if (!rows.length) return <Empty />;
-  return <div className="overflow-x-auto rounded-lg border"><table className="w-full min-w-[640px] text-left text-sm"><thead className="bg-muted/60 text-xs uppercase text-muted-foreground"><tr>{headers.map(h => <th key={h} className="px-3 py-3 font-semibold">{h}</th>)}</tr></thead><tbody className="divide-y">{rows.map((row, i) => <tr key={i} className="hover:bg-muted/30">{row.map((cell, j) => <td key={j} className="px-3 py-3 align-middle">{cell}</td>)}</tr>)}</tbody></table></div>;
+  const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
+  const currentPage = Math.min(page, pageCount - 1);
+  const visibleRows = rows.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
+  return <div className="space-y-3">
+    <div className="hidden overflow-x-auto rounded-lg border sm:block">
+      <table className="w-full min-w-[640px] text-left text-sm">
+        <thead className="bg-muted/60 text-xs uppercase text-muted-foreground"><tr>{headers.map(h => <th key={h} className="px-3 py-3 font-semibold">{h}</th>)}</tr></thead>
+        <tbody className="divide-y">{visibleRows.map((row, i) => <tr key={currentPage * pageSize + i} className="hover:bg-muted/30">{row.map((cell, j) => <td key={j} className="px-3 py-3 align-middle">{cell}</td>)}</tr>)}</tbody>
+      </table>
+    </div>
+    <div className="grid gap-2 sm:hidden">
+      {visibleRows.map((row, i) => <article key={currentPage * pageSize + i} className="rounded-lg border bg-card p-3">
+        <dl className="grid gap-2">{row.map((cell, j) => <div key={j} className="grid grid-cols-[minmax(7rem,0.8fr)_minmax(0,1.2fr)] gap-3 border-b pb-2 last:border-0 last:pb-0"><dt className="text-xs font-medium text-muted-foreground">{headers[j]}</dt><dd className="min-w-0 break-words text-sm">{cell}</dd></div>)}</dl>
+      </article>)}
+    </div>
+    {rows.length > pageSize && <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+      <span>{currentPage * pageSize + 1}–{Math.min((currentPage + 1) * pageSize, rows.length)} de {rows.length} registros</span>
+      <div className="flex gap-2">
+        <button type="button" aria-label="Página anterior" disabled={currentPage === 0} onClick={() => setPage(Math.max(0, currentPage - 1))} className="rounded-md border px-3 py-2 disabled:opacity-40">Anterior</button>
+        <button type="button" aria-label="Próxima página" disabled={currentPage >= pageCount - 1} onClick={() => setPage(Math.min(pageCount - 1, currentPage + 1))} className="rounded-md border px-3 py-2 disabled:opacity-40">Próxima</button>
+      </div>
+    </div>}
+  </div>;
 }
 const pretty = (v: unknown) => v == null || v === "" ? "—" : String(v);
 const dateLabel = (v: string | null | undefined) => v ? new Date(v).toLocaleDateString("pt-BR") : "—";
 const errorMessage = (e: unknown) => e instanceof Error ? e.message : "Não foi possível concluir a operação.";
 const downloadBlob = (blob: Blob, filename: string) => {
-  const url = URL.createObjectURL(blob); const a = document.createElement("a");
-  a.href = url; a.download = filename; a.click(); URL.revokeObjectURL(url);
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 };
 
-// ── Login screen (accepts any email + any password ≥ 6 chars) ──────────────────
+function buildExportBlob(
+  format: string,
+  rows: AnyRow[],
+  delimiter: string,
+  dateFormat: string,
+): { blob: Blob; extension: string } {
+  const columns = Object.keys(rows[0] ?? {});
+  const normalizedRows = rows.map((row) => Object.fromEntries(columns.map((column) => {
+    const value = row[column];
+    if (dateFormat !== "BR" || typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}(?:T|$)/.test(value)) {
+      return [column, value];
+    }
+    const date = new Date(value.includes("T") ? value : value.slice(0, 10) + "T12:00:00");
+    if (Number.isNaN(date.getTime())) return [column, value];
+    const day = String(date.getDate()).padStart(2, "0");
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const year = date.getFullYear();
+    const hasTime = value.includes("T");
+    const time = hasTime ? ` ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}` : "";
+    return [column, `${day}/${month}/${year}${time}`];
+  })));
+
+  if (format === "json") {
+    return { blob: new Blob([JSON.stringify(normalizedRows, null, 2)], { type: "application/json;charset=utf-8" }), extension: "json" };
+  }
+  if (format === "xlsx") {
+    const sheet = XLSX.utils.json_to_sheet(normalizedRows, { header: columns });
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, sheet, "Dados");
+    const output = XLSX.write(workbook, { bookType: "xlsx", type: "array" });
+    return { blob: new Blob([output], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), extension: "xlsx" };
+  }
+
+  const escapeCell = (value: unknown) => `"${String(value ?? "").replace(/"/g, '""')}"`;
+  const csv = [
+    columns.map(escapeCell).join(delimiter),
+    ...normalizedRows.map((row) => columns.map((column) => escapeCell(row[column])).join(delimiter)),
+  ].join("\r\n");
+  return { blob: new Blob(["\ufeff", csv], { type: "text/csv;charset=utf-8" }), extension: "csv" };
+}
+
+// Demo access is passwordless for three reserved, fictitious role accounts.
 function LoginScreen({ onLogin }: { onLogin: () => void }) {
-  const [email, setEmail] = useState("demo@armazen.app");
-  const [password, setPassword] = useState("demo123");
-  const [busy, setBusy] = useState(false);
+  const [busyRole, setBusyRole] = useState<DemoRole | null>(null);
   const [err, setErr] = useState("");
 
-  const handleSubmit = async (e: ReactFormEvent) => {
-    e.preventDefault();
-    setBusy(true); setErr("");
+  const profiles: { role: DemoRole; title: string; description: string; actions: string; Icon: typeof Warehouse }[] = [
+    { role: "consulta", title: "Consulta", description: "Visualize indicadores, materiais, saldos, endereços, movimentações e tarefas.", actions: "Acesso somente para leitura", Icon: Search },
+    { role: "operacao", title: "Operação", description: "Consulte o estoque, registre movimentações e contagens e atualize tarefas.", actions: "Rotinas operacionais", Icon: ClipboardCheck },
+    { role: "gestao", title: "Gestão", description: "Administre armazéns, materiais, equipe, configurações e exportações.", actions: "Acesso administrativo", Icon: ShieldCheck },
+  ];
+
+  const handleDemoLogin = async (role: DemoRole) => {
+    setBusyRole(role);
+    setErr("");
     try {
-      // 1. Use server function to create/update user via admin API (bypasses email confirmation)
-      await ensureUserExists({ data: { email, password } });
-
-      // 2. Sign in — guaranteed to work since user was just created/updated above
-      const { error: signInErr } = await supabase.auth.signInWithPassword({ email, password });
-      if (signInErr) throw signInErr;
-
+      const result = await startDemoSession({ data: { role } });
+      const { error } = await supabase.auth.verifyOtp({
+        token_hash: result.tokenHash,
+        type: "magiclink",
+      });
+      if (error) throw error;
       onLogin();
     } catch (e) {
       setErr(errorMessage(e));
     } finally {
-      setBusy(false);
+      setBusyRole(null);
     }
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4">
-      <div className="w-full max-w-sm">
+    <div className="flex min-h-screen items-center justify-center bg-background px-4 py-10">
+      <div className="w-full max-w-5xl">
         <div className="mb-8 text-center">
-          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary text-primary-foreground">
+          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-sm">
             <Warehouse className="h-8 w-8" />
           </div>
-          <h1 className="text-2xl font-bold">armaZen</h1>
-          <p className="mt-1 text-sm text-muted-foreground">Sistema de Gestão de Armazém</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">Ambiente de demonstração</p>
+          <h1 className="mt-2 text-3xl font-bold tracking-tight">armaZen</h1>
+          <p className="mx-auto mt-2 max-w-xl text-sm text-muted-foreground">Explore o sistema com três perfis prontos. Cada acesso usa uma conta própria e permissões correspondentes à rotina demonstrada.</p>
         </div>
-        <form onSubmit={handleSubmit} className="space-y-4 rounded-xl border bg-card p-6 shadow-sm">
-          <h2 className="font-semibold">Entrar no sistema</h2>
-          <p className="text-xs text-muted-foreground">Use qualquer e-mail e senha (mín. 6 caracteres). Se a conta não existir, será criada automaticamente.</p>
-          <Field label="E-mail" value={email} onChange={setEmail} type="email" required />
-          <Field label="Senha" value={password} onChange={setPassword} type="password" required placeholder="mínimo 6 caracteres" />
-          {err && (
-            <div className="rounded-lg bg-destructive/10 p-3 text-xs text-destructive whitespace-pre-wrap">{err}</div>
-          )}
-          <button
-            type="submit"
-            disabled={busy}
-            className="flex h-10 w-full items-center justify-center rounded-lg bg-primary text-sm font-semibold text-primary-foreground disabled:opacity-50"
-          >
-            {busy ? "Entrando…" : "Entrar"}
-          </button>
-        </form>
-        <p className="mt-4 text-center text-xs text-muted-foreground">Protótipo acadêmico · armaZen</p>
+        {err && <div role="alert" className="mx-auto mb-5 max-w-3xl rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">{err}</div>}
+        <div className="grid gap-4 md:grid-cols-3">
+          {profiles.map(({ role, title, description, actions, Icon }) => <article key={role} className="flex flex-col rounded-2xl border bg-card p-5 shadow-sm transition-shadow hover:shadow-md">
+            <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-xl bg-primary/10 text-primary"><Icon className="h-5 w-5" /></div>
+            <h2 className="text-lg font-semibold">Acessar como {title}</h2>
+            <p className="mt-2 flex-1 text-sm leading-6 text-muted-foreground">{description}</p>
+            <p className="mb-4 mt-4 rounded-md bg-muted px-3 py-2 text-xs font-medium">{actions}</p>
+            <button type="button" disabled={busyRole !== null} onClick={() => void handleDemoLogin(role)} className="flex h-11 items-center justify-center gap-2 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-wait disabled:opacity-60">
+              {busyRole === role ? "Preparando acesso…" : `Entrar como ${title}`}
+            </button>
+          </article>)}
+        </div>
+        <p className="mt-6 text-center text-xs text-muted-foreground">As contas utilizam dados fictícios compartilhados entre os perfis. Não insira informações reais neste ambiente.</p>
+        <p className="mt-2 text-center text-xs text-muted-foreground">Protótipo acadêmico · armaZen</p>
       </div>
     </div>
   );
@@ -155,7 +238,10 @@ function Index() {
   const [tasks, setTasks] = useState<AnyRow[]>([]);
   const [templates, setTemplates] = useState<AnyRow[]>([]);
   const [history, setHistory] = useState<AnyRow[]>([]);
+  const [auditLogs, setAuditLogs] = useState<AnyRow[]>([]);
   const [counts, setCounts] = useState<AnyRow[]>([]);
+  const [inventorySessions, setInventorySessions] = useState<AnyRow[]>([]);
+  const [materialAttributes, setMaterialAttributes] = useState<AnyRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
@@ -163,6 +249,16 @@ function Index() {
   const [search, setSearch] = useState("");
   const [reload, setReload] = useState(0);
   const [period, setPeriod] = useState("30");
+  const [dashboardWarehouseId, setDashboardWarehouseId] = useState("todos");
+  const [materialFilters, setMaterialFilters] = useState({ status: "todos", stock: "todos" });
+  const [movementFilters, setMovementFilters] = useState({ type: "todos", material_id: "todos", location_id: "todos", user_id: "todos", fromDate: "", toDate: "" });
+  const [mapWarehouseId, setMapWarehouseId] = useState("");
+  const [mapParentId, setMapParentId] = useState("");
+  const [mapSelectedLocationId, setMapSelectedLocationId] = useState("");
+  const [selectedInventoryId, setSelectedInventoryId] = useState("");
+  const [inventoryForm, setInventoryForm] = useState({ warehouse_id: "todos", description: "" });
+  const [attributeForm, setAttributeForm] = useState({ id: "", key: "", label: "", data_type: "text", required: false });
+  const [attributeValues, setAttributeValues] = useState<Record<string, string>>({});
 
   const refresh = useCallback(() => setReload(n => n + 1), []);
   const notify = (msg: string) => { setMessage(msg); setDataError(""); };
@@ -175,7 +271,7 @@ function Index() {
         .catch(() => { if (alive) { setUser(null); setDataError("Não foi possível verificar a sessão do Supabase."); } });
       const { data } = supabase.auth.onAuthStateChange((_event, session) => {
         setUser(session?.user ?? null);
-        if (!session) { setOrgId(""); setOrgName(""); setRole(""); }
+        if (!session) { setOrgId(""); setOrgName(""); setRole(""); setSection("dashboard"); }
       });
       return () => { alive = false; data.subscription.unsubscribe(); };
     } catch (e) { setDataError(errorMessage(e)); setUser(null); return () => { alive = false; }; }
@@ -190,13 +286,11 @@ function Index() {
       if (cancelled) return;
       const row = data?.[0];
       if (!row) {
-        // No org yet — create one with demo data automatically
-        const { data: orgData, error: orgErr } = await db.rpc("create_organization", { _name: "Empresa Demo", _with_demo: true });
-        if (orgErr) throw orgErr;
-        const newOrgId = orgData as string;
-        setOrgId(newOrgId);
-        setOrgName("Empresa Demo");
-        setRole("gestao");
+        // Never silently create an organization or elevate an unlinked user to Gestão.
+        setOrgId("");
+        setOrgName("");
+        setRole("");
+        setDataError("Esta conta não está vinculada a uma organização. Entre por um dos três perfis de demonstração.");
         return;
       }
       const org = Array.isArray(row.organizations) ? row.organizations[0] : row.organizations;
@@ -217,7 +311,10 @@ function Index() {
         const results = await Promise.all([
           get("warehouses"), get("location_levels", "sort_order"), get("locations"), get("materials"),
           get("inventory_balances", "updated_at"), get("stock_movements"), get("tasks"),
-          get("export_templates"), get("export_history"), get("inventory_count_items"),
+          get("export_templates"),
+          role === "gestao" ? get("export_history") : Promise.resolve({ data: [], error: null }),
+          role === "gestao" ? get("audit_logs") : Promise.resolve({ data: [], error: null }),
+          get("inventory_count_items"), get("inventory_counts"), get("material_attributes"),
           db.from("organization_members").select("id, user_id, role, created_at").eq("org_id", orgId).order("created_at", { ascending: true }),
         ]);
         const failed = results.find((r: AnyRow) => r.error);
@@ -226,8 +323,11 @@ function Index() {
         setWarehouses(results[0].data ?? []); setLevels(results[1].data ?? []); setLocations(results[2].data ?? []);
         setMaterials(results[3].data ?? []); setBalances(results[4].data ?? []); setMovements(results[5].data ?? []);
         setTasks(results[6].data ?? []); setTemplates(results[7].data ?? []); setHistory(results[8].data ?? []);
-        setCounts(results[9].data ?? []);
-        const memberRows = results[10].data ?? [];
+        setAuditLogs(results[9].data ?? []);
+        setCounts(results[10].data ?? []);
+        setInventorySessions(results[11].data ?? []);
+        setMaterialAttributes(results[12].data ?? []);
+        const memberRows = results[13].data ?? [];
         const userIds = memberRows.map((m: AnyRow) => m.user_id);
         let profileRows: AnyRow[] = [];
         if (userIds.length) {
@@ -240,7 +340,7 @@ function Index() {
     };
     void load();
     return () => { cancelled = true; };
-  }, [orgId, reload]);
+  }, [orgId, reload, role]);
 
   // Form state hooks — must be declared before conditional returns
   const [whForm, setWhForm] = useState({ id:"", code:"", name:"", description:"" });
@@ -253,26 +353,152 @@ function Index() {
   const [exportForm, setExportForm] = useState({ dataset:"materials", format:"csv", template_id:"", template_name:"", delimiter:";", date_format:"ISO" });
   const [selectedFields, setSelectedFields] = useState<string[]>(datasets["materials"]!.fields);
   const [preview, setPreview] = useState<AnyRow[]>([]);
+  const [exportFieldMappings, setExportFieldMappings] = useState<Record<string, string>>({});
+  const [exportFromDate, setExportFromDate] = useState("");
+  const [exportToDate, setExportToDate] = useState("");
+  const [exportMissingValues, setExportMissingValues] = useState(0);
+  const [exportMissingRequired, setExportMissingRequired] = useState(0);
 
-  useEffect(() => { setSelectedFields(datasets[exportForm.dataset]?.fields ?? []); setPreview([]); }, [exportForm.dataset]);
+  useEffect(() => {
+    setSelectedFields(datasets[exportForm.dataset]?.fields ?? []);
+    setExportFieldMappings({});
+    setPreview([]);
+    setExportMissingValues(0);
+    setExportMissingRequired(0);
+  }, [exportForm.dataset]);
 
-  // Derived totals — useMemo must be before conditional returns
+  useEffect(() => {
+    if (!inventorySessions.some((session) => session.id === selectedInventoryId)) {
+      setSelectedInventoryId(inventorySessions[0]?.id ?? "");
+    }
+  }, [inventorySessions, selectedInventoryId]);
+
+  // Warehouse-scoped, unit-aware indicators; never add kg, L and units together.
   const totals = useMemo(() => {
+    const scopedLocations = locations.filter((location) =>
+      dashboardWarehouseId === "todos" || location.warehouse_id === dashboardWarehouseId
+    );
+    const scopedLocationIds = new Set(scopedLocations.map((location) => location.id));
+    const scopedBalances = balances.filter((balance) =>
+      dashboardWarehouseId === "todos" || scopedLocationIds.has(balance.location_id)
+    );
     const balanceByMaterial = new Map<string, number>();
-    balances.forEach(b => balanceByMaterial.set(b.material_id, (balanceByMaterial.get(b.material_id) ?? 0) + Number(b.quantity || 0)));
+    const quantityByUnit = new Map<string, number>();
+    scopedBalances.forEach((balance) => {
+      const quantity = Number(balance.quantity || 0);
+      balanceByMaterial.set(balance.material_id, (balanceByMaterial.get(balance.material_id) ?? 0) + quantity);
+      const unit = materials.find((material) => material.id === balance.material_id)?.unit || "un";
+      quantityByUnit.set(unit, (quantityByUnit.get(unit) ?? 0) + quantity);
+    });
     const since = Date.now() - Number(period) * 86400000;
-    const open = tasks.filter(t => t.status !== "concluida");
+    const scopedMovementsAll = movements.filter((movement) =>
+      dashboardWarehouseId === "todos" ||
+      scopedLocationIds.has(movement.from_location_id) ||
+      scopedLocationIds.has(movement.to_location_id)
+    );
+    const scopedMovements = scopedMovementsAll.filter((movement) =>
+      new Date(movement.created_at).getTime() >= since
+    );
+    const scopedTasks = tasks.filter((task) =>
+      dashboardWarehouseId === "todos" ||
+      (task.location_id != null && scopedLocationIds.has(task.location_id))
+    );
+    const open = scopedTasks.filter((task) => task.status !== "concluida");
+    const storageLocations = scopedLocations.filter((location) =>
+      location.active && levels.some((level) => level.id === location.level_id && level.is_storage)
+    );
+    const occupiedLocations = storageLocations.filter((location) =>
+      scopedBalances.some((balance) => balance.location_id === location.id && Number(balance.quantity) > 0)
+    ).length;
+    const unitSummary = [...quantityByUnit.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([unit, quantity]) => `${new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 2 }).format(quantity)} ${unit}`)
+      .join(" · ");
+    const movementDays = Array.from({ length: 7 }, (_, index) => {
+      const date = new Date();
+      date.setHours(0, 0, 0, 0);
+      date.setDate(date.getDate() - (6 - index));
+      const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+      return {
+        label: date.toLocaleDateString("pt-BR", { weekday: "short" }),
+        count: movements.filter((movement) => {
+          if (dashboardWarehouseId !== "todos" &&
+              !scopedLocationIds.has(movement.from_location_id) &&
+              !scopedLocationIds.has(movement.to_location_id)) return false;
+          const created = new Date(movement.created_at);
+          const movementKey = `${created.getFullYear()}-${String(created.getMonth() + 1).padStart(2, "0")}-${String(created.getDate()).padStart(2, "0")}`;
+          return movementKey === key;
+        }).length,
+      };
+    });
     return {
-      materials: materials.filter(m => m.status === "ativo" || m.status === "active").length,
-      locations: locations.filter(l => l.active).length,
-      units: balances.reduce((sum, b) => sum + Number(b.quantity || 0), 0),
-      lowStock: materials.filter(m => (m.status === "ativo" || m.status === "active") && (balanceByMaterial.get(m.id) ?? 0) < Number(m.min_stock || 0)).length,
-      movements: movements.filter(m => new Date(m.created_at).getTime() >= since).length,
+      materials: materials.filter((material) => material.status === "ativo" || material.status === "active").length,
+      locations: scopedLocations.filter((location) => location.active).length,
+      units: unitSummary || "0",
+      lowStock: materials.filter((material) =>
+        (material.status === "ativo" || material.status === "active") &&
+        (balanceByMaterial.get(material.id) ?? 0) < Number(material.min_stock || 0)
+      ).length,
+      movements: scopedMovements.length,
+      movementTypeCounts: ["entrada", "saida", "transferencia", "ajuste", "estorno"].map((type) => ({
+        type,
+        count: scopedMovementsAll.filter((movement) => movement.type === type).length,
+      })),
       pending: open.length,
-      overdue: open.filter(t => t.due_at && new Date(t.due_at).getTime() < Date.now()).length,
-      divergences: counts.filter(c => Number(c.difference) !== 0).length,
+      overdue: open.filter((task) => task.due_at && new Date(task.due_at).getTime() < Date.now()).length,
+      divergences: counts.filter((item) =>
+        Number(item.difference) !== 0 &&
+        (dashboardWarehouseId === "todos" || scopedLocationIds.has(item.location_id))
+      ).length,
+      occupancy: storageLocations.length ? Math.round((occupiedLocations / storageLocations.length) * 100) : null,
+      occupiedLocations,
+      storageLocations: storageLocations.length,
+      movementDays,
     };
-  }, [materials, locations, balances, movements, tasks, counts, period]);
+  }, [materials, locations, levels, balances, movements, tasks, counts, period, dashboardWarehouseId]);
+
+  const selectedMapWarehouseId = mapWarehouseId && warehouses.some((warehouse) => warehouse.id === mapWarehouseId && warehouse.active)
+    ? mapWarehouseId
+    : warehouses.find((warehouse) => warehouse.active)?.id ?? "";
+  const mapChildren = locations
+    .filter((location) =>
+      location.active &&
+      location.warehouse_id === selectedMapWarehouseId &&
+      (location.parent_id ?? "") === mapParentId
+    )
+    .sort((a, b) => Number(a.pos_y ?? 0) - Number(b.pos_y ?? 0) || Number(a.pos_x ?? 0) - Number(b.pos_x ?? 0));
+  const selectedMapLocation = locations.find((location) => location.id === mapSelectedLocationId);
+  const mapDetailBalances = selectedMapLocation
+    ? balances.filter((balance) => balance.location_id === selectedMapLocation.id && Number(balance.quantity) > 0)
+    : [];
+  const mapDetailUnits = [...new Set(mapDetailBalances.map((balance) =>
+    materials.find((material) => material.id === balance.material_id)?.unit || "un"
+  ))];
+  const mapCapacityUnit = String(selectedMapLocation?.capacity_unit ?? "").trim().toLowerCase();
+  const mapCapacityCompatible = Boolean(
+    selectedMapLocation?.capacity &&
+    (mapDetailUnits.length === 0 || (mapDetailUnits.length === 1 && mapDetailUnits[0].toLowerCase() === mapCapacityUnit))
+  );
+  const mapComparableQuantity = mapCapacityCompatible && mapDetailUnits.length > 0
+    ? mapDetailBalances.reduce((sum, balance) => sum + Number(balance.quantity || 0), 0)
+    : 0;
+  const mapBreadcrumb = useMemo(() => {
+    const path: AnyRow[] = [];
+    let current = locations.find((location) => location.id === mapParentId);
+    while (current && current.warehouse_id === selectedMapWarehouseId) {
+      path.unshift(current);
+      current = current.parent_id ? locations.find((location) => location.id === current?.parent_id) : undefined;
+    }
+    return path;
+  }, [mapParentId, selectedMapWarehouseId, locations]);
+
+  useEffect(() => {
+    if (!user || role === "consulta") {
+      if (section === "inventory" || section === "exports" || section === "settings") setSection("dashboard");
+    } else if (role === "operacao" && (section === "exports" || section === "settings")) {
+      setSection("dashboard");
+    }
+  }, [user, role, section]);
 
   // Show loading splash while checking session
   if (user === undefined) {
@@ -295,6 +521,16 @@ function Index() {
 
   const canOperate = Boolean(user && orgId && role !== "consulta");
   const canManage = role === "gestao";
+  const isDemoWorkspace = members.some((member) =>
+    reservedDemoEmails.has(String(member.profiles?.email ?? "").toLowerCase())
+  );
+  const visibleNav = nav.filter((item) => {
+    if (canManage) return true;
+    if (item.id === "exports" || item.id === "settings") return false;
+    if (item.id === "inventory") return role === "operacao";
+    return true;
+  });
+  const roleLabel = role === "gestao" ? "Gestão" : role === "operacao" ? "Operação" : role === "consulta" ? "Consulta" : "Não identificado";
   const filtered = (rows: AnyRow[], keys: string[]) => rows.filter(row => keys.some(k => String(row[k] ?? "").toLowerCase().includes(search.toLowerCase())));
   const runSave = async (fn: () => Promise<unknown>, success: string) => {
     if (!user || !orgId) { fail(new Error("É necessário haver uma sessão autenticada vinculada a uma organização para gravar dados.")); return; }
@@ -306,37 +542,53 @@ function Index() {
   const statusPill = (text: string) => <span className="rounded-full bg-muted px-2.5 py-1 text-xs font-medium">{text.replaceAll("_", " ")}</span>;
 
   const dashboard = <div className="space-y-6">
-    <div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-base font-semibold">Indicadores operacionais</h2><p className="mt-1 text-sm text-muted-foreground">Calculados a partir dos registros retornados pelo Supabase.</p></div><div className="flex gap-2"><SelectField label="Período" value={period} onChange={setPeriod} options={[{value:"7",label:"7 dias"},{value:"30",label:"30 dias"},{value:"90",label:"90 dias"}]} /><button onClick={refresh} disabled={loading} className="mt-5 flex h-10 items-center gap-2 rounded-lg border px-3 text-sm"><RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} /> Atualizar</button></div></div>
+    <div className="flex flex-wrap items-end justify-between gap-3">
+      <div><h2 className="text-base font-semibold">Indicadores operacionais</h2><p className="mt-1 text-sm text-muted-foreground">Indicadores calculados a partir dos dados salvos no Supabase.</p></div>
+      <div className="flex flex-wrap items-end gap-2">
+        <SelectField label="Período" value={period} onChange={setPeriod} options={[{value:"7",label:"7 dias"},{value:"30",label:"30 dias"},{value:"90",label:"90 dias"}]} />
+        <SelectField label="Armazém" value={dashboardWarehouseId} onChange={setDashboardWarehouseId} options={[{value:"todos",label:"Todos os armazéns"},...warehouses.filter(w=>w.active).map(w=>({value:w.id,label:w.name}))]} />
+        <button onClick={refresh} disabled={loading} className="flex h-10 items-center gap-2 rounded-lg border px-3 text-sm"><RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} /> Atualizar</button>
+      </div>
+    </div>
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
       {[
-        ["Materiais ativos", totals.materials, Package], ["Endereços ativos", totals.locations, MapPinned],
-        ["Unidades em estoque", new Intl.NumberFormat("pt-BR",{maximumFractionDigits:2}).format(totals.units), Boxes],
-        ["Abaixo do mínimo", totals.lowStock, AlertTriangle], [`Movimentações (${period} dias)`, totals.movements, Activity],
-        ["Tarefas em aberto", totals.pending, ClipboardList], ["Tarefas atrasadas", totals.overdue, AlertTriangle],
+        ["Materiais ativos", totals.materials, Package],
+        ["Endereços ativos", totals.locations, MapPinned],
+        ["Saldo por unidade", totals.units, Boxes],
+        ["Ocupação de posições", totals.occupancy === null ? "Sem posições de armazenagem" : `${totals.occupancy}% · ${totals.occupiedLocations}/${totals.storageLocations}`, Warehouse],
+        ["Abaixo do mínimo", totals.lowStock, AlertTriangle],
+        [`Movimentações (${period} dias)`, totals.movements, Activity],
+        ["Tarefas em aberto", totals.pending, ClipboardList],
+        ["Tarefas atrasadas", totals.overdue, AlertTriangle],
         ["Divergências registradas", totals.divergences, CheckCircle2],
-      ].map(([label, value, Icon]: any) => <article key={String(label)} className="rounded-xl border bg-card p-5 shadow-sm"><div className="flex items-center justify-between gap-2"><p className="text-sm text-muted-foreground">{label}</p><span className="rounded-lg bg-muted p-2"><Icon className="h-4 w-4" /></span></div><p className="mt-4 text-3xl font-semibold">{orgId ? value : "—"}</p></article>)}
+      ].map(([label, value, Icon]: any) => <article key={String(label)} className="rounded-xl border bg-card p-5 shadow-sm"><div className="flex items-center justify-between gap-2"><p className="text-sm text-muted-foreground">{label}</p><span className="rounded-lg bg-primary/10 p-2 text-primary"><Icon className="h-4 w-4" /></span></div><p className="mt-4 break-words text-2xl font-semibold">{orgId ? value : "—"}</p></article>)}
     </div>
 
     <div className="grid gap-4 xl:grid-cols-3">
-      <Panel title="Movimentações por tipo" description="Distribuição dos registros carregados.">
-        {movementTypes.map(type=>{const n=movements.filter(m=>m.type===type).length;const max=Math.max(1,...movementTypes.map(t=>movements.filter(m=>m.type===t).length));return <div key={type} className="mb-3"><div className="mb-1 flex justify-between text-sm"><span className="capitalize">{type}</span><span>{n}</span></div><div className="h-2 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-primary" style={{width:`${n/max*100}%`}}/></div></div>;})}
+      <Panel title="Movimentações por tipo" description="Distribuição por tipo no armazém selecionado.">
+        {totals.movementTypeCounts.map(({type}: any)=>{const count=totals.movementTypeCounts.find((item: AnyRow)=>item.type===type)?.count??0;const max=Math.max(1,...totals.movementTypeCounts.map((item: AnyRow)=>item.count));return <div key={type} className="mb-3"><div className="mb-1 flex justify-between gap-2 text-sm"><span className="capitalize">{type}</span><span>{count}</span></div><div className="h-2 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-primary" style={{width:`${count/max*100}%`}}/></div></div>;})}
       </Panel>
-      <Panel title="Situação das tarefas" description="Tarefas por coluna do Kanban.">
-        {taskStatuses.map(status=>{const n=tasks.filter(t=>t.status===status).length;const max=Math.max(1,...taskStatuses.map(t=>tasks.filter(x=>x.status===t).length));return <div key={status} className="mb-3"><div className="mb-1 flex justify-between text-sm"><span>{status.replaceAll("_"," ")}</span><span>{n}</span></div><div className="h-2 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-primary" style={{width:`${n/max*100}%`}}/></div></div>;})}
+      <Panel title="Situação das tarefas" description="Distribuição das tarefas no escopo selecionado.">
+        {taskStatuses.map(status=>{const relevantTasks=tasks.filter(t=>(dashboardWarehouseId==="todos"||(t.location_id&&locations.some(l=>l.id===t.location_id&&l.warehouse_id===dashboardWarehouseId)))&&t.status===status);const count=relevantTasks.length;const max=Math.max(1,...taskStatuses.map(s=>tasks.filter(t=>(dashboardWarehouseId==="todos"||(t.location_id&&locations.some(l=>l.id===t.location_id&&l.warehouse_id===dashboardWarehouseId)))&&t.status===s).length));return <div key={status} className="mb-3"><div className="mb-1 flex justify-between gap-2 text-sm"><span>{status.replaceAll("_"," ")}</span><span>{count}</span></div><div className="h-2 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-primary" style={{width:`${count/max*100}%`}}/></div></div>;})}
       </Panel>
-      <Panel title="Situação dos endereços" description="Estados cadastrados; não representa ocupação física.">
-        {locationStatuses.map(status=>{const n=locations.filter(l=>l.active&&l.status===status).length;const max=Math.max(1,...locationStatuses.map(t=>locations.filter(l=>l.active&&l.status===t).length));return <div key={status} className="mb-3"><div className="mb-1 flex justify-between text-sm"><span>{status.replaceAll("_"," ")}</span><span>{n}</span></div><div className="h-2 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-primary" style={{width:`${n/max*100}%`}}/></div></div>;})}
+      <Panel title="Situação dos endereços" description="Contagem dos estados cadastrados, não capacidade física.">
+        {locationStatuses.map(status=>{const count=locations.filter(l=>l.active&&(dashboardWarehouseId==="todos"||l.warehouse_id===dashboardWarehouseId)&&l.status===status).length;const max=Math.max(1,...locationStatuses.map(s=>locations.filter(l=>l.active&&(dashboardWarehouseId==="todos"||l.warehouse_id===dashboardWarehouseId)&&l.status===s).length));return <div key={status} className="mb-3"><div className="mb-1 flex justify-between gap-2 text-sm"><span>{status.replaceAll("_"," ")}</span><span>{count}</span></div><div className="h-2 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-primary" style={{width:`${count/max*100}%`}}/></div></div>;})}
       </Panel>
     </div>
+    <Panel title="Movimentações nos últimos 7 dias" description="Quantidade de registros por dia; não representa volume físico movimentado.">
+      <div className="grid grid-cols-7 gap-2 sm:gap-4">
+        {totals.movementDays.map((day: AnyRow)=>{const max=Math.max(1,...totals.movementDays.map((item: AnyRow)=>item.count));return <div key={day.label} className="flex min-w-0 flex-col items-center gap-2"><span className="text-xs font-medium tabular-nums">{day.count}</span><div className="flex h-24 w-full items-end rounded-md bg-muted p-1"><div className="w-full rounded-sm bg-primary transition-all" style={{height:`${Math.max(day.count===0?0:8,day.count/max*100)}%`}}/></div><span className="text-[10px] capitalize text-muted-foreground sm:text-xs">{day.label}</span></div>;})}
+      </div>
+    </Panel>
     <div className="grid gap-4 xl:grid-cols-2">
-      <Panel title="Movimentações recentes" description="Últimos registros persistidos."><Table headers={["Nº","Tipo","Material","Quantidade","Data"]} rows={movements.slice(0,6).map(m => [pretty(m.number), statusPill(m.type), pretty(materials.find(x=>x.id===m.material_id)?.code), pretty(m.quantity), dateLabel(m.created_at)])} /></Panel>
-      <Panel title="Tarefas prioritárias" description="Tarefas abertas, incluindo prazos vencidos."><Table headers={["Tarefa","Prioridade","Status","Prazo"]} rows={tasks.filter(t=>t.status!=="concluida").sort((a,b)=>Number(new Date(a.due_at||"9999").getTime())-Number(new Date(b.due_at||"9999").getTime())).slice(0,6).map(t=>[t.title,statusPill(t.priority),statusPill(t.status),dateLabel(t.due_at)])} /></Panel>
+      <Panel title="Movimentações recentes" description="Últimos registros persistidos no escopo selecionado."><Table headers={["Nº","Tipo","Material","Quantidade","Data"]} rows={movements.filter(m=>dashboardWarehouseId==="todos"||locations.some(l=>l.warehouse_id===dashboardWarehouseId&&(l.id===m.from_location_id||l.id===m.to_location_id))).slice(0,6).map(m => [pretty(m.number), statusPill(m.type), pretty(materials.find(x=>x.id===m.material_id)?.code), `${pretty(m.quantity)} ${materials.find(x=>x.id===m.material_id)?.unit??""}`, dateLabel(m.created_at)])} /></Panel>
+      <Panel title="Tarefas prioritárias" description="Tarefas abertas, incluindo prazos vencidos."><Table headers={["Tarefa","Prioridade","Status","Prazo"]} rows={tasks.filter(t=>(dashboardWarehouseId==="todos"||(t.location_id&&locations.some(l=>l.id===t.location_id&&l.warehouse_id===dashboardWarehouseId)))&&t.status!=="concluida").sort((a,b)=>Number(new Date(a.due_at||"9999").getTime())-Number(new Date(b.due_at||"9999").getTime())).slice(0,6).map(t=>[t.title,statusPill(t.priority),statusPill(t.status),dateLabel(t.due_at)])} /></Panel>
     </div>
   </div>;
 
   const warehouseSection = <div className="space-y-5">
     <Panel title="Armazéns" description="Cadastre instalações genéricas. Desativar preserva vínculos e histórico.">
-      {canManage && <form className="mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4" onSubmit={e=>{e.preventDefault(); void runSave(async()=>{const payload={code:whForm.code.trim(),name:whForm.name.trim(),description:whForm.description.trim()||null,org_id:orgId,active:true,updated_at:new Date().toISOString()}; if(whForm.id) {const {error}=await db.from("warehouses").update(payload).eq("id",whForm.id).eq("org_id",orgId);if(error)throw error;} else {const {error}=await db.from("warehouses").insert(payload);if(error)throw error;} setWhForm({id:"",code:"",name:"",description:""});},"Armazém salvo.");}}> <Field label="Código" value={whForm.code} onChange={v=>setWhForm({...whForm,code:v})} required/><Field label="Nome" value={whForm.name} onChange={v=>setWhForm({...whForm,name:v})} required/><Field label="Descrição" value={whForm.description} onChange={v=>setWhForm({...whForm,description:v})}/><div className="flex items-end gap-2"><button disabled={saving} className="flex h-10 items-center gap-2 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground"><Plus className="h-4 w-4"/>{whForm.id?"Salvar edição":"Cadastrar"}</button>{whForm.id&&<button type="button" className="h-10 rounded-lg border px-3 text-sm" onClick={()=>setWhForm({id:"",code:"",name:"",description:""})}>Cancelar</button>}</div></form>}
+      {canManage && <form className="mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4" onSubmit={e=>{e.preventDefault(); void runSave(async()=>{const payload={code:whForm.code.trim(),name:whForm.name.trim(),description:whForm.description.trim()||null,org_id:orgId,active:whForm.id?(warehouses.find(w=>w.id===whForm.id)?.active??true):true,updated_at:new Date().toISOString()}; if(whForm.id) {const {error}=await db.from("warehouses").update(payload).eq("id",whForm.id).eq("org_id",orgId);if(error)throw error;} else {const {error}=await db.from("warehouses").insert(payload);if(error)throw error;} setWhForm({id:"",code:"",name:"",description:""});},"Armazém salvo.");}}> <Field label="Código" value={whForm.code} onChange={v=>setWhForm({...whForm,code:v})} required/><Field label="Nome" value={whForm.name} onChange={v=>setWhForm({...whForm,name:v})} required/><Field label="Descrição" value={whForm.description} onChange={v=>setWhForm({...whForm,description:v})}/><div className="flex items-end gap-2"><button disabled={saving} className="flex h-10 items-center gap-2 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground"><Plus className="h-4 w-4"/>{whForm.id?"Salvar edição":"Cadastrar"}</button>{whForm.id&&<button type="button" className="h-10 rounded-lg border px-3 text-sm" onClick={()=>setWhForm({id:"",code:"",name:"",description:""})}>Cancelar</button>}</div></form>}
       <Table headers={["Código","Armazém","Descrição","Situação","Ações"]} rows={warehouses.map(w=>[w.code,w.name,pretty(w.description),w.active?"Ativo":"Inativo",<div className="flex gap-2">{canManage&&<button title="Editar" className="rounded border p-2" onClick={()=>setWhForm({id:w.id,code:w.code,name:w.name,description:w.description??""})}><Pencil className="h-4 w-4"/></button>}{canManage&&<button title={w.active?"Desativar":"Ativar"} className="rounded border p-2" onClick={()=>void runSave(async()=>{const {error}=await db.from("warehouses").update({active:!w.active,updated_at:new Date().toISOString()}).eq("id",w.id).eq("org_id",orgId);if(error)throw error;},"Situação atualizada.")}>{w.active?<Ban className="h-4 w-4"/>:<Check className="h-4 w-4"/>}</button>}</div>])}/>
     </Panel>
     <Panel title="Níveis configuráveis" description="A profundidade da hierarquia é definida pelos níveis e relações pai/filho.">
@@ -344,24 +596,59 @@ function Index() {
       <Table headers={["Armazém","Nível","Ordem","Armazenagem","Ações"]} rows={levels.map(l=>[pretty(warehouses.find(w=>w.id===l.warehouse_id)?.name),l.name,l.sort_order,l.is_storage?"Sim":"Não",canManage?<button className="rounded border p-2" title="Editar nível" onClick={()=>setLevelForm({id:l.id,warehouse_id:l.warehouse_id,name:l.name,sort_order:String(l.sort_order),is_storage:l.is_storage})}><Pencil className="h-4 w-4"/></button>:"—"])}/>
     </Panel>
     <Panel title="Endereços" description="Estados: disponível, reservado ou bloqueado. A posição visual é esquemática, não uma planta real.">
-      {canManage&&<form className="mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4" onSubmit={e=>{e.preventDefault();void runSave(async()=>{const p={org_id:orgId,warehouse_id:locForm.warehouse_id,level_id:locForm.level_id,parent_id:locForm.parent_id||null,code:locForm.code.trim(),name:locForm.name.trim(),status:locForm.status,capacity:locForm.capacity?Number(locForm.capacity):null,capacity_unit:locForm.capacity_unit||null,notes:locForm.notes||null,active:true,updated_at:new Date().toISOString()};const q=locForm.id?db.from("locations").update(p).eq("id",locForm.id):db.from("locations").insert(p);const {error}=await q;if(error)throw error;setLocForm({id:"",warehouse_id:"",level_id:"",parent_id:"",code:"",name:"",status:"disponivel",capacity:"",capacity_unit:"un",notes:""});},"Endereço salvo.");}}><SelectField label="Armazém" value={locForm.warehouse_id} onChange={v=>setLocForm({...locForm,warehouse_id:v,level_id:"",parent_id:""})} required options={warehouses.filter(w=>w.active).map(w=>({value:w.id,label:w.name}))}/><SelectField label="Nível" value={locForm.level_id} onChange={v=>setLocForm({...locForm,level_id:v})} required options={levels.filter(l=>l.warehouse_id===locForm.warehouse_id).map(l=>({value:l.id,label:l.name}))}/><SelectField label="Endereço pai" value={locForm.parent_id} onChange={v=>setLocForm({...locForm,parent_id:v})} options={locations.filter(l=>l.warehouse_id===locForm.warehouse_id&&l.id!==locForm.id).map(l=>({value:l.id,label:`${l.code} — ${l.name}`}))}/><Field label="Código" value={locForm.code} onChange={v=>setLocForm({...locForm,code:v})} required/><Field label="Nome" value={locForm.name} onChange={v=>setLocForm({...locForm,name:v})} required/><SelectField label="Situação" value={locForm.status} onChange={v=>setLocForm({...locForm,status:v})} options={locationStatuses.map(v=>({value:v,label:v.replaceAll("_"," ")}))} required/><Field label="Capacidade" type="number" min={0} step={0.01} value={locForm.capacity} onChange={v=>setLocForm({...locForm,capacity:v})}/><Field label="Unidade da capacidade" value={locForm.capacity_unit} onChange={v=>setLocForm({...locForm,capacity_unit:v})}/><Field label="Observações" value={locForm.notes} onChange={v=>setLocForm({...locForm,notes:v})}/><div className="flex items-end gap-2"><button className="h-10 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground" disabled={saving}>Salvar endereço</button>{locForm.id&&<button type="button" className="h-10 rounded-lg border px-3 text-sm" onClick={()=>setLocForm({id:"",warehouse_id:"",level_id:"",parent_id:"",code:"",name:"",status:"disponivel",capacity:"",capacity_unit:"un",notes:""})}>Cancelar</button>}</div></form>}
+      {canManage&&<form className="mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4" onSubmit={e=>{e.preventDefault();void runSave(async()=>{const p={org_id:orgId,warehouse_id:locForm.warehouse_id,level_id:locForm.level_id,parent_id:locForm.parent_id||null,code:locForm.code.trim(),name:locForm.name.trim(),status:locForm.status,capacity:locForm.capacity?Number(locForm.capacity):null,capacity_unit:locForm.capacity_unit||null,notes:locForm.notes||null,active:locForm.id?(locations.find(l=>l.id===locForm.id)?.active??true):true,updated_at:new Date().toISOString()};const q=locForm.id?db.from("locations").update(p).eq("id",locForm.id):db.from("locations").insert(p);const {error}=await q;if(error)throw error;setLocForm({id:"",warehouse_id:"",level_id:"",parent_id:"",code:"",name:"",status:"disponivel",capacity:"",capacity_unit:"un",notes:""});},"Endereço salvo.");}}><SelectField label="Armazém" value={locForm.warehouse_id} onChange={v=>setLocForm({...locForm,warehouse_id:v,level_id:"",parent_id:""})} required options={warehouses.filter(w=>w.active).map(w=>({value:w.id,label:w.name}))}/><SelectField label="Nível" value={locForm.level_id} onChange={v=>setLocForm({...locForm,level_id:v})} required options={levels.filter(l=>l.warehouse_id===locForm.warehouse_id).map(l=>({value:l.id,label:l.name}))}/><SelectField label="Endereço pai" value={locForm.parent_id} onChange={v=>setLocForm({...locForm,parent_id:v})} options={locations.filter(l=>l.warehouse_id===locForm.warehouse_id&&l.id!==locForm.id).map(l=>({value:l.id,label:`${l.code} — ${l.name}`}))}/><Field label="Código" value={locForm.code} onChange={v=>setLocForm({...locForm,code:v})} required/><Field label="Nome" value={locForm.name} onChange={v=>setLocForm({...locForm,name:v})} required/><SelectField label="Situação" value={locForm.status} onChange={v=>setLocForm({...locForm,status:v})} options={locationStatuses.map(v=>({value:v,label:v.replaceAll("_"," ")}))} required/><Field label="Capacidade" type="number" min={0} step={0.01} value={locForm.capacity} onChange={v=>setLocForm({...locForm,capacity:v})}/><Field label="Unidade da capacidade" value={locForm.capacity_unit} onChange={v=>setLocForm({...locForm,capacity_unit:v})}/><Field label="Observações" value={locForm.notes} onChange={v=>setLocForm({...locForm,notes:v})}/><div className="flex items-end gap-2"><button className="h-10 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground" disabled={saving}>Salvar endereço</button>{locForm.id&&<button type="button" className="h-10 rounded-lg border px-3 text-sm" onClick={()=>setLocForm({id:"",warehouse_id:"",level_id:"",parent_id:"",code:"",name:"",status:"disponivel",capacity:"",capacity_unit:"un",notes:""})}>Cancelar</button>}</div></form>}
       <div className="mb-3 flex gap-2"><Search className="mt-2.5 h-4 w-4 text-muted-foreground"/><input className="h-10 w-full max-w-sm rounded-lg border bg-background px-3 text-sm" placeholder="Pesquisar código, nome ou nível" value={search} onChange={e=>setSearch(e.target.value)}/></div>
-      <Table headers={["Código","Nome","Armazém / nível","Pai","Situação","Saldo","Ações"]} rows={filtered(locations,["code","name","status"]).map(l=>{const qty=balances.filter(b=>b.location_id===l.id).reduce((s,b)=>s+Number(b.quantity||0),0);return [l.code,l.name,`${warehouses.find(w=>w.id===l.warehouse_id)?.name??"—"} / ${levels.find(x=>x.id===l.level_id)?.name??"—"}`,pretty(locations.find(x=>x.id===l.parent_id)?.code),statusPill(l.status),qty,canManage?<div className="flex gap-2"><button className="rounded border p-2" onClick={()=>setLocForm({id:l.id,warehouse_id:l.warehouse_id,level_id:l.level_id,parent_id:l.parent_id??"",code:l.code,name:l.name,status:l.status,capacity:l.capacity==null?"":String(l.capacity),capacity_unit:l.capacity_unit??"un",notes:l.notes??""})}><Pencil className="h-4 w-4"/></button><button className="rounded border p-2" title="Desativar endereço" onClick={()=>void runSave(async()=>{if(qty>0)throw new Error("Não é possível desativar um endereço com saldo. Transfira o estoque antes.");const {error}=await db.from("locations").update({active:false,updated_at:new Date().toISOString()}).eq("id",l.id).eq("org_id",orgId);if(error)throw error;},"Endereço desativado.")}><Ban className="h-4 w-4"/></button></div>:"—"]})}/>
+      <Table headers={["Código","Nome","Armazém / nível","Pai","Situação","Saldo","Ações"]} rows={locations.filter(l=>[l.code,l.name,l.status,levels.find(level=>level.id===l.level_id)?.name,warehouses.find(w=>w.id===l.warehouse_id)?.name,locations.find(parent=>parent.id===l.parent_id)?.code].some(value=>String(value??"").toLowerCase().includes(search.toLowerCase()))).map(l=>{const qty=balances.filter(b=>b.location_id===l.id).reduce((s,b)=>s+Number(b.quantity||0),0);return [l.code,l.name,`${warehouses.find(w=>w.id===l.warehouse_id)?.name??"—"} / ${levels.find(x=>x.id===l.level_id)?.name??"—"}`,pretty(locations.find(x=>x.id===l.parent_id)?.code),statusPill(l.status),qty,canManage?<div className="flex gap-2"><button className="rounded border p-2" onClick={()=>setLocForm({id:l.id,warehouse_id:l.warehouse_id,level_id:l.level_id,parent_id:l.parent_id??"",code:l.code,name:l.name,status:l.status,capacity:l.capacity==null?"":String(l.capacity),capacity_unit:l.capacity_unit??"un",notes:l.notes??""})}><Pencil className="h-4 w-4"/></button><button className="rounded border p-2" title="Desativar endereço" onClick={()=>void runSave(async()=>{if(qty>0)throw new Error("Não é possível desativar um endereço com saldo. Transfira o estoque antes.");const {error}=await db.from("locations").update({active:false,updated_at:new Date().toISOString()}).eq("id",l.id).eq("org_id",orgId);if(error)throw error;},"Endereço desativado.")}><Ban className="h-4 w-4"/></button></div>:"—"]})}/>
     </Panel>
-    <Panel title="Mapa esquemático" description="Representação simplificada dos endereços cadastrados; não substitui uma planta física.">
-      {locations.filter(l=>l.active).length===0?<Empty>Cadastre endereços para visualizar a estrutura.</Empty>:<div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{locations.filter(l=>l.active).map(l=><article key={l.id} className={`rounded-lg border p-4 ${l.status==="bloqueado"?"border-destructive/50 bg-destructive/5":l.status==="reservado"?"border-amber-500/50 bg-amber-500/5":"bg-card"}`}><div className="flex items-start justify-between gap-2"><strong>{l.code}</strong>{statusPill(l.status)}</div><p className="mt-1 text-sm">{l.name}</p><p className="mt-2 text-xs text-muted-foreground">{warehouses.find(w=>w.id===l.warehouse_id)?.name} · {levels.find(x=>x.id===l.level_id)?.name}</p><p className="mt-2 text-xs">Saldo: {balances.filter(b=>b.location_id===l.id).reduce((s,b)=>s+Number(b.quantity||0),0)} unidades</p></article>)}</div>}
+    <Panel title="Mapa esquemático do armazém" description="Explore a hierarquia por nível, selecione um endereço e veja os materiais e a ocupação quando as unidades forem compatíveis. A representação não substitui uma planta física.">
+      <div className="grid gap-3 sm:grid-cols-2">
+        <SelectField label="Armazém" value={selectedMapWarehouseId} onChange={value=>{setMapWarehouseId(value);setMapParentId("");setMapSelectedLocationId("");}} options={warehouses.filter(w=>w.active).map(w=>({value:w.id,label:`${w.code} — ${w.name}`}))}/>
+        <div className="flex flex-wrap items-end gap-2 text-sm">
+          <button type="button" onClick={()=>{setMapParentId("");setMapSelectedLocationId("");}} className={`rounded-md border px-3 py-2 ${mapParentId===""?"border-primary bg-primary/10 text-primary":""}`}>{warehouses.find(w=>w.id===selectedMapWarehouseId)?.name??"Armazém"}</button>
+          {mapBreadcrumb.map(item=><button type="button" key={item.id} onClick={()=>{setMapParentId(item.id);setMapSelectedLocationId(item.id);}} className={`rounded-md border px-3 py-2 ${mapParentId===item.id?"border-primary bg-primary/10 text-primary":""}`}>{item.code}</button>)}
+        </div>
+      </div>
+      {!selectedMapWarehouseId?<Empty>Cadastre um armazém ativo para visualizar sua estrutura.</Empty>:mapChildren.length===0?<Empty>{mapParentId?"Este endereço não possui subendereços ativos. Selecione um endereço anterior na trilha.":"Não há endereços ativos neste armazém."}</Empty>:<div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        {mapChildren.map(location=>{
+          const childrenExist=locations.some(item=>item.parent_id===location.id&&item.active);
+          const locationBalances=balances.filter(balance=>balance.location_id===location.id&&Number(balance.quantity)>0);
+          const byUnit=new Map<string,number>();
+          locationBalances.forEach(balance=>{const unit=materials.find(material=>material.id===balance.material_id)?.unit||"un";byUnit.set(unit,(byUnit.get(unit)??0)+Number(balance.quantity||0));});
+          const qtyLabel=[...byUnit.entries()].map(([unit,qty])=>`${new Intl.NumberFormat("pt-BR",{maximumFractionDigits:2}).format(qty)} ${unit}`).join(" · ")||"Sem saldo";
+          const capacityUnit=String(location.capacity_unit??"").trim().toLowerCase();
+          const compatible=Boolean(location.capacity&&(byUnit.size===0||(byUnit.size===1&&[...byUnit.keys()][0].toLowerCase()===capacityUnit)));
+          const comparableQty=byUnit.size?[...byUnit.values()][0]:0;
+          const occupiedPct=compatible?Math.min(100,Math.round(comparableQty/Number(location.capacity)*100)):null;
+          return <button type="button" key={location.id} onClick={()=>{setMapSelectedLocationId(location.id);if(childrenExist)setMapParentId(location.id);}} className={`rounded-xl border p-4 text-left transition-colors hover:border-primary/60 hover:bg-primary/5 ${mapSelectedLocationId===location.id?"border-primary bg-primary/5 ring-1 ring-primary/20":""} ${location.status==="bloqueado"?"border-destructive/40":location.status==="reservado"?"border-amber-500/40":""}`}>
+            <div className="flex items-start justify-between gap-2"><strong className="break-words">{location.code}</strong>{statusPill(location.status)}</div>
+            <p className="mt-1 text-sm">{location.name}</p>
+            <p className="mt-3 text-xs text-muted-foreground">{levels.find(level=>level.id===location.level_id)?.name??"Nível" }{childrenExist?" · Abrir nível": " · Endereço"}</p>
+            <p className="mt-2 text-sm font-medium">{qtyLabel}</p>
+            {occupiedPct!==null&&<div className="mt-3"><div className="mb-1 flex justify-between text-xs text-muted-foreground"><span>Ocupação estimada</span><span>{occupiedPct}%</span></div><div className="h-2 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-primary" style={{width:`${occupiedPct}%`}}/></div></div>}
+          </button>;
+        })}
+      </div>}
+      {selectedMapLocation&&selectedMapLocation.warehouse_id===selectedMapWarehouseId&&<div className="mt-5 rounded-xl border bg-muted/20 p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Endereço selecionado</p><h3 className="mt-1 text-lg font-semibold">{selectedMapLocation.code} — {selectedMapLocation.name}</h3><p className="mt-1 text-sm text-muted-foreground">{levels.find(level=>level.id===selectedMapLocation.level_id)?.name??"Nível"} · {selectedMapLocation.status.replaceAll("_"," ")}</p></div><div className="text-sm"><p>Capacidade: {selectedMapLocation.capacity==null?"Não configurada":`${selectedMapLocation.capacity} ${selectedMapLocation.capacity_unit??""}`}</p><p className="mt-1">Ocupação: {mapCapacityCompatible?`${new Intl.NumberFormat("pt-BR",{maximumFractionDigits:2}).format(mapComparableQuantity)} / ${selectedMapLocation.capacity} ${selectedMapLocation.capacity_unit} (${Math.min(100,Math.round(mapComparableQuantity/Number(selectedMapLocation.capacity)*100))}%)`:"não calculada — unidades incompatíveis ou capacidade ausente"}</p></div></div>
+        <div className="mt-4"><h4 className="mb-2 text-sm font-semibold">Materiais armazenados</h4><Table headers={["Material","Descrição","Lote","Quantidade","Unidade"]} rows={mapDetailBalances.map(balance=>{const material=materials.find(item=>item.id===balance.material_id);return [pretty(material?.code),pretty(material?.description),pretty(balance.lot),balance.quantity,pretty(material?.unit)];})}/></div>
+        <button type="button" className="mt-4 rounded-md border px-3 py-2 text-sm" onClick={()=>{setMapSelectedLocationId("");setMapParentId(selectedMapLocation.parent_id??"");}}>Voltar para o nível anterior</button>
+      </div>}
     </Panel>
   </div>;
 
   const materialsSection = <div className="space-y-5">
     <Panel title={matForm.id?"Editar material":"Cadastrar material"} description="Os saldos são lidos de inventory_balances; não são editados diretamente nesta tela.">
-      {canOperate?<form className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4" onSubmit={e=>{e.preventDefault();void runSave(async()=>{let attrs:AnyRow;try{attrs=JSON.parse(matForm.attributes||"{}");if(!attrs||Array.isArray(attrs)||typeof attrs!=="object")throw new Error();}catch{throw new Error("Atributos adicionais precisam estar em formato JSON de objeto.");}const p={org_id:orgId,code:matForm.code.trim(),description:matForm.description.trim(),category:matForm.category.trim(),unit:matForm.unit.trim(),barcode:matForm.barcode.trim()||null,min_stock:Number(matForm.min_stock),status:matForm.status,tracks_lot:matForm.tracks_lot,attributes:attrs,updated_at:new Date().toISOString()};const q=matForm.id?db.from("materials").update(p).eq("id",matForm.id):db.from("materials").insert(p);const {error}=await q;if(error)throw error;setMatForm({id:"",code:"",description:"",category:"Geral",unit:"un",barcode:"",min_stock:"0",status:"ativo",tracks_lot:false,attributes:"{}"});},"Material salvo.");}}><Field label="Código interno" value={matForm.code} onChange={v=>setMatForm({...matForm,code:v})} required/><Field label="Descrição" value={matForm.description} onChange={v=>setMatForm({...matForm,description:v})} required/><Field label="Categoria" value={matForm.category} onChange={v=>setMatForm({...matForm,category:v})} required/><Field label="Unidade de medida" value={matForm.unit} onChange={v=>setMatForm({...matForm,unit:v})} required/><Field label="Código de barras (opcional)" value={matForm.barcode} onChange={v=>setMatForm({...matForm,barcode:v})}/><Field label="Estoque mínimo" type="number" min={0} step={0.01} value={matForm.min_stock} onChange={v=>setMatForm({...matForm,min_stock:v})} required/><SelectField label="Status" value={matForm.status} onChange={v=>setMatForm({...matForm,status:v})} options={[{value:"ativo",label:"Ativo"},{value:"inativo",label:"Inativo"}]} required/><label className="flex items-center gap-2 self-end pb-2 text-sm"><input type="checkbox" checked={matForm.tracks_lot} onChange={e=>setMatForm({...matForm,tracks_lot:e.target.checked})}/> Controla lote/validade</label><label className="grid gap-1.5 text-sm sm:col-span-2 xl:col-span-3"><span className="font-medium">Atributos adicionais (JSON)</span><textarea className="min-h-20 rounded-lg border bg-background p-3 font-mono text-xs" value={matForm.attributes} onChange={e=>setMatForm({...matForm,attributes:e.target.value})}/></label><div className="flex items-end gap-2"><button disabled={saving} className="h-10 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground">{matForm.id?"Salvar alterações":"Cadastrar material"}</button>{matForm.id&&<button type="button" className="h-10 rounded-lg border px-3 text-sm" onClick={()=>setMatForm({id:"",code:"",description:"",category:"Geral",unit:"un",barcode:"",min_stock:"0",status:"ativo",tracks_lot:false,attributes:"{}"})}>Cancelar</button>}</div></form>:<Empty>O perfil atual não possui permissão para cadastrar ou editar materiais.</Empty>}
+      {canManage?<form className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4" onSubmit={e=>{e.preventDefault();void runSave(async()=>{let storedAttrs:AnyRow={};try{storedAttrs=JSON.parse(matForm.attributes||"{}");if(!storedAttrs||Array.isArray(storedAttrs)||typeof storedAttrs!=="object")throw new Error();}catch{throw new Error("Os atributos já salvos deste material estão inválidos.");}const attrs:AnyRow={...storedAttrs};for(const attribute of materialAttributes){const raw=attributeValues[attribute.key]??String(storedAttrs[attribute.key]??"");if(attribute.required&&!String(raw).trim())throw new Error(`Preencha o campo obrigatório: ${attribute.label}.`);if(!String(raw).trim()){delete attrs[attribute.key];continue;}if(attribute.data_type==="number"){const numeric=Number(raw);if(!Number.isFinite(numeric))throw new Error(`O campo ${attribute.label} precisa ser numérico.`);attrs[attribute.key]=numeric;}else if(attribute.data_type==="boolean"){attrs[attribute.key]=raw==="true";}else{attrs[attribute.key]=raw;}}const p={org_id:orgId,code:matForm.code.trim(),description:matForm.description.trim(),category:matForm.category.trim(),unit:matForm.unit.trim(),barcode:matForm.barcode.trim()||null,min_stock:Number(matForm.min_stock),status:matForm.status,tracks_lot:matForm.tracks_lot,attributes:attrs,updated_at:new Date().toISOString()};const q=matForm.id?db.from("materials").update(p).eq("id",matForm.id):db.from("materials").insert(p);const {error}=await q;if(error)throw error;setMatForm({id:"",code:"",description:"",category:"Geral",unit:"un",barcode:"",min_stock:"0",status:"ativo",tracks_lot:false,attributes:"{}"});setAttributeValues({});},"Material salvo.");}}><Field label="Código interno" value={matForm.code} onChange={v=>setMatForm({...matForm,code:v})} required/><Field label="Descrição" value={matForm.description} onChange={v=>setMatForm({...matForm,description:v})} required/><Field label="Categoria" value={matForm.category} onChange={v=>setMatForm({...matForm,category:v})} required/><Field label="Unidade de medida" value={matForm.unit} onChange={v=>setMatForm({...matForm,unit:v})} required/><Field label="Código de barras (opcional)" value={matForm.barcode} onChange={v=>setMatForm({...matForm,barcode:v})}/><Field label="Estoque mínimo" type="number" min={0} step={0.01} value={matForm.min_stock} onChange={v=>setMatForm({...matForm,min_stock:v})} required/><SelectField label="Status" value={matForm.status} onChange={v=>setMatForm({...matForm,status:v})} options={[{value:"ativo",label:"Ativo"},{value:"inativo",label:"Inativo"}]} required/><label className="flex items-center gap-2 self-end pb-2 text-sm"><input type="checkbox" checked={matForm.tracks_lot} onChange={e=>setMatForm({...matForm,tracks_lot:e.target.checked})}/> Controla lote/validade</label><div className="grid gap-3 sm:col-span-2 sm:grid-cols-2 xl:col-span-4">{materialAttributes.length?materialAttributes.map(attribute=>attribute.data_type==="boolean"?<SelectField key={attribute.key} label={`${attribute.label}${attribute.required?" *":""}`} value={attributeValues[attribute.key]??""} onChange={value=>setAttributeValues(current=>({...current,[attribute.key]:value}))} required={attribute.required} options={[{value:"true",label:"Sim"},{value:"false",label:"Não"}]}/>:<Field key={attribute.key} label={`${attribute.label}${attribute.required?" *":""}`} type={attribute.data_type==="number"?"number":attribute.data_type==="date"?"date":"text"} value={attributeValues[attribute.key]??""} onChange={value=>setAttributeValues(current=>({...current,[attribute.key]:value}))} required={attribute.required}/>):<p className="text-xs text-muted-foreground">A Gestão pode configurar campos adicionais em Usuários e configurações.</p>}</div><div className="flex items-end gap-2"><button disabled={saving} className="h-10 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground">{matForm.id?"Salvar alterações":"Cadastrar material"}</button>{matForm.id&&<button type="button" className="h-10 rounded-lg border px-3 text-sm" onClick={()=>{setMatForm({id:"",code:"",description:"",category:"Geral",unit:"un",barcode:"",min_stock:"0",status:"ativo",tracks_lot:false,attributes:"{}"});setAttributeValues({});}}>Cancelar</button>}</div></form>:<Empty>O perfil atual não possui permissão para cadastrar ou editar materiais.</Empty>}
     </Panel>
     <Panel title="Materiais e saldos" description="Pesquise por código, descrição, categoria ou código de barras.">
-      <div className="mb-3 flex gap-2"><Search className="mt-2.5 h-4 w-4 text-muted-foreground"/><input className="h-10 w-full max-w-sm rounded-lg border bg-background px-3 text-sm" placeholder="Pesquisar material..." value={search} onChange={e=>setSearch(e.target.value)}/></div>
-      <Table headers={["Código","Descrição","Categoria","Unidade","Saldo total","Mínimo","Situação","Ações"]} rows={filtered(materials,["code","description","category","barcode"]).map(m=>{const qty=balances.filter(b=>b.material_id===m.id).reduce((s,b)=>s+Number(b.quantity||0),0);return [m.code,m.description,m.category,m.unit,qty,m.min_stock,qty<Number(m.min_stock||0)?<span className="font-semibold text-amber-700">Abaixo do mínimo</span>:statusPill(m.status),<div className="flex gap-2">{canOperate&&<button className="rounded border p-2" title="Editar" onClick={()=>setMatForm({id:m.id,code:m.code,description:m.description,category:m.category,unit:m.unit,barcode:m.barcode??"",min_stock:String(m.min_stock),status:m.status,tracks_lot:m.tracks_lot,attributes:JSON.stringify(m.attributes??{},null,2)})}><Pencil className="h-4 w-4"/></button>}{canManage&&<button className="rounded border p-2" title="Alternar status" onClick={()=>void runSave(async()=>{const {error}=await db.from("materials").update({status:m.status==="ativo"?"inativo":"ativo",updated_at:new Date().toISOString()}).eq("id",m.id).eq("org_id",orgId);if(error)throw error;},"Status atualizado.")}>{m.status==="ativo"?<Ban className="h-4 w-4"/>:<Check className="h-4 w-4"/>}</button>}</div>]})}/>
+      <div className="grid gap-3 md:grid-cols-3">
+        <div className="flex gap-2"><Search className="mt-2.5 h-4 w-4 shrink-0 text-muted-foreground"/><input className="h-10 w-full rounded-lg border bg-background px-3 text-sm" placeholder="Pesquisar código, descrição..." value={search} onChange={e=>setSearch(e.target.value)}/></div>
+        <SelectField label="Situação" value={materialFilters.status} onChange={value=>setMaterialFilters(current=>({...current,status:value}))} options={[{value:"todos",label:"Todas as situações"},{value:"ativo",label:"Ativos"},{value:"inativo",label:"Inativos"}]}/>
+        <SelectField label="Nível de estoque" value={materialFilters.stock} onChange={value=>setMaterialFilters(current=>({...current,stock:value}))} options={[{value:"todos",label:"Todos os níveis"},{value:"baixo",label:"Abaixo do mínimo"},{value:"normal",label:"No mínimo ou acima"}]}/>
+      </div>
+      <Table headers={["Código","Descrição","Categoria","Unidade","Saldo total","Mínimo","Situação","Ações"]} rows={filtered(materials,["code","description","category","barcode"]).filter(m=>(materialFilters.status==="todos"||m.status===materialFilters.status)&&(materialFilters.stock==="todos"||(materialFilters.stock==="baixo"?balances.filter(b=>b.material_id===m.id).reduce((sum,b)=>sum+Number(b.quantity||0),0)<Number(m.min_stock||0):balances.filter(b=>b.material_id===m.id).reduce((sum,b)=>sum+Number(b.quantity||0),0)>=Number(m.min_stock||0)))).map(m=>{const qty=balances.filter(b=>b.material_id===m.id).reduce((s,b)=>s+Number(b.quantity||0),0);return [m.code,m.description,m.category,m.unit,qty,m.min_stock,qty<Number(m.min_stock||0)?<span className="font-semibold text-amber-700">Abaixo do mínimo</span>:statusPill(m.status),<div className="flex gap-2">{canManage&&<button className="rounded border p-2" title="Editar" onClick={()=>{setMatForm({id:m.id,code:m.code,description:m.description,category:m.category,unit:m.unit,barcode:m.barcode??"",min_stock:String(m.min_stock),status:m.status,tracks_lot:m.tracks_lot,attributes:JSON.stringify(m.attributes??{},null,2)});setAttributeValues(Object.fromEntries(Object.entries(m.attributes??{}).map(([key,value])=>[key,String(value??"")])));}}><Pencil className="h-4 w-4"/></button>}{canManage&&<button className="rounded border p-2" title="Alternar status" onClick={()=>void runSave(async()=>{const {error}=await db.from("materials").update({status:m.status==="ativo"?"inativo":"ativo",updated_at:new Date().toISOString()}).eq("id",m.id).eq("org_id",orgId);if(error)throw error;},"Status atualizado.")}>{m.status==="ativo"?<Ban className="h-4 w-4"/>:<Check className="h-4 w-4"/>}</button>}</div>]})}/>
     </Panel>
-    <Panel title="Saldo por endereço" description="Lote e validade são exibidos quando registrados."><Table headers={["Material","Endereço","Lote","Quantidade","Validade"]} rows={balances.filter(b=>Number(b.quantity)!==0).map(b=>[pretty(materials.find(m=>m.id===b.material_id)?.code),pretty(locations.find(l=>l.id===b.location_id)?.code),pretty(b.lot),b.quantity,dateLabel(b.expiry_date)])}/></Panel>
+    <Panel title="Saldo por endereço" description="Lote e validade são exibidos quando registrados."><Table headers={["Material","Endereço","Lote","Quantidade","Unidade","Validade"]} rows={balances.filter(b=>Number(b.quantity)!==0).map(b=>[pretty(materials.find(m=>m.id===b.material_id)?.code),pretty(locations.find(l=>l.id===b.location_id)?.code),pretty(b.lot),b.quantity,pretty(materials.find(m=>m.id===b.material_id)?.unit),dateLabel(b.expiry_date)])}/></Panel>
   </div>;
 
   const movementsSection = <div className="space-y-5">
@@ -372,9 +659,56 @@ function Index() {
       {canOperate?<AdjustmentForm orgId={orgId} materials={materials} locations={locations} saving={saving} onSave={runSave} onDone={refresh}/>:<Empty>O perfil atual não possui permissão para ajustar estoque.</Empty>}
     </Panel>
     <Panel title="Histórico de movimentações" description="Registros concluídos são preservados; correções devem usar estorno rastreável.">
-      <div className="mb-3 flex gap-2"><Search className="mt-2.5 h-4 w-4 text-muted-foreground"/><input className="h-10 w-full max-w-sm rounded-lg border bg-background px-3 text-sm" placeholder="Pesquisar tipo, lote, motivo ou referência" value={search} onChange={e=>setSearch(e.target.value)}/></div>
-      <Table headers={["Nº","Data","Tipo","Material","Quantidade","Origem","Destino","Referência / motivo","Estorno"]} rows={filtered(movements,["type","lot","reason","reference","notes"]).map(m=>[pretty(m.number),new Date(m.created_at).toLocaleString("pt-BR"),statusPill(m.type),pretty(materials.find(x=>x.id===m.material_id)?.code),m.quantity,pretty(locations.find(x=>x.id===m.from_location_id)?.code),pretty(locations.find(x=>x.id===m.to_location_id)?.code),pretty(m.reference||m.reason),m.reversed_by?"Estornado":canOperate?<button className="rounded border px-2 py-1 text-xs" onClick={()=>{const reason=window.prompt("Motivo do estorno (obrigatório):");if(reason?.trim())void runSave(async()=>{const {error}=await db.rpc("reverse_movement",{_movement:m.id,_reason:reason.trim()});if(error)throw error;},"Estorno registrado.");}}>Estornar</button>:"—"])}/></Panel>
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="flex gap-2"><Search className="mt-2.5 h-4 w-4 shrink-0 text-muted-foreground"/><input className="h-10 w-full rounded-lg border bg-background px-3 text-sm" placeholder="Pesquisar referência, lote, material..." value={search} onChange={e=>setSearch(e.target.value)}/></div>
+        <SelectField label="Tipo" value={movementFilters.type} onChange={value=>setMovementFilters(current=>({...current,type:value}))} options={[{value:"todos",label:"Todos os tipos"},...["entrada","saida","transferencia","ajuste","estorno"].map(value=>({value,label:value}))]}/>
+        <SelectField label="Material" value={movementFilters.material_id} onChange={value=>setMovementFilters(current=>({...current,material_id:value}))} options={[{value:"todos",label:"Todos os materiais"},...materials.map(material=>({value:material.id,label:`${material.code} — ${material.description}`}))]}/>
+        <SelectField label="Endereço" value={movementFilters.location_id} onChange={value=>setMovementFilters(current=>({...current,location_id:value}))} options={[{value:"todos",label:"Todos os endereços"},...locations.map(location=>({value:location.id,label:`${location.code} — ${location.name}`}))]}/>
+        <SelectField label="Responsável" value={movementFilters.user_id} onChange={value=>setMovementFilters(current=>({...current,user_id:value}))} options={[{value:"todos",label:"Todos os usuários"},...members.map(member=>({value:member.user_id,label:member.profiles?.full_name||member.profiles?.email||member.user_id.slice(0,8)}))]}/>
+        <Field label="Data inicial" type="date" value={movementFilters.fromDate} onChange={value=>setMovementFilters(current=>({...current,fromDate:value}))}/>
+        <Field label="Data final" type="date" value={movementFilters.toDate} onChange={value=>setMovementFilters(current=>({...current,toDate:value}))}/>
+      </div>
+      <Table headers={["Nº","Data","Tipo","Material","Quantidade","Origem","Destino","Referência / motivo","Estorno"]} rows={movements.filter(m=>{const material=materials.find(item=>item.id===m.material_id);const fromLocation=locations.find(item=>item.id===m.from_location_id);const toLocation=locations.find(item=>item.id===m.to_location_id);const query=search.trim().toLowerCase();const createdAt=new Date(m.created_at).getTime();const fromDate=movementFilters.fromDate?new Date(`${movementFilters.fromDate}T00:00:00`).getTime():null;const toDate=movementFilters.toDate?new Date(`${movementFilters.toDate}T23:59:59.999`).getTime():null;const searchable=[m.number,m.type,m.lot,m.reason,m.reference,m.notes,material?.code,material?.description,fromLocation?.code,fromLocation?.name,toLocation?.code,toLocation?.name,members.find(member=>member.user_id===m.user_id)?.profiles?.email];return (!query||searchable.some(value=>String(value??"").toLowerCase().includes(query)) )&&(movementFilters.type==="todos"||m.type===movementFilters.type)&&(movementFilters.material_id==="todos"||m.material_id===movementFilters.material_id)&&(movementFilters.location_id==="todos"||m.from_location_id===movementFilters.location_id||m.to_location_id===movementFilters.location_id)&&(movementFilters.user_id==="todos"||m.user_id===movementFilters.user_id)&&(!fromDate||createdAt>=fromDate)&&(!toDate||createdAt<=toDate);}).map(m=>[pretty(m.number),new Date(m.created_at).toLocaleString("pt-BR"),statusPill(m.type),pretty(materials.find(x=>x.id===m.material_id)?.code),`${pretty(m.quantity)} ${materials.find(x=>x.id===m.material_id)?.unit??""}`,pretty(locations.find(x=>x.id===m.from_location_id)?.code),pretty(locations.find(x=>x.id===m.to_location_id)?.code),pretty(m.reference||m.reason),m.reversed_by?"Estornado":canOperate?<button className="rounded border px-2 py-1 text-xs" onClick={()=>{const reason=window.prompt("Motivo do estorno (obrigatório):");if(reason?.trim())void runSave(async()=>{const {error}=await db.rpc("reverse_movement",{_movement:m.id,_reason:reason.trim()});if(error)throw error;},"Estorno registrado.");}}>Estornar</button>:"—"])}/></Panel>
     <Panel title="Contagens de inventário" description="Histórico de diferenças registradas."><Table headers={["Data","Material","Endereço","Lote","Esperado","Contado","Diferença","Motivo"]} rows={counts.map(c=>[dateLabel(c.created_at),pretty(materials.find(m=>m.id===c.material_id)?.code),pretty(locations.find(l=>l.id===c.location_id)?.code),pretty(c.lot),c.expected_qty,c.counted_qty,c.difference,pretty(c.reason)])}/></Panel>
+  </div>;
+
+
+  const selectedInventory = inventorySessions.find((session) => session.id === selectedInventoryId);
+  const selectedInventoryItems = counts.filter((item) => item.count_id === selectedInventoryId);
+
+  const inventorySection = <div className="space-y-5">
+    <Panel title="Abrir inventário" description="Crie uma sessão de contagem para organizar as conferências. As diferenças são registradas com histórico e motivo.">
+      {canOperate?<form className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3" onSubmit={e=>{e.preventDefault();void runSave(async()=>{
+        const payload={org_id:orgId,warehouse_id:inventoryForm.warehouse_id&&inventoryForm.warehouse_id!=="todos"?inventoryForm.warehouse_id:null,description:inventoryForm.description.trim()||"Contagem cíclica",created_by:user!.id,status:"em_andamento",completed_at:null};
+        const {data,error}=await db.from("inventory_counts").insert(payload).select("*").single();
+        if(error)throw error;
+        setInventoryForm({warehouse_id:"todos",description:""});
+        setSelectedInventoryId(data.id);
+      },"Sessão de inventário criada.");}}>
+        <Field label="Descrição" value={inventoryForm.description} onChange={v=>setInventoryForm({...inventoryForm,description:v})} placeholder="Ex.: Contagem cíclica semanal"/>
+        <SelectField label="Armazém (opcional)" value={inventoryForm.warehouse_id} onChange={v=>setInventoryForm({...inventoryForm,warehouse_id:v})} options={[{value:"todos",label:"Todos os armazéns"},...warehouses.filter(w=>w.active).map(w=>({value:w.id,label:w.name}))]}/>
+        <div className="flex items-end"><button disabled={saving} className="h-10 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground"><Plus className="mr-2 inline h-4 w-4"/>Iniciar inventário</button></div>
+      </form>:<Empty>O perfil atual não possui permissão para abrir inventários.</Empty>}
+    </Panel>
+
+    <Panel title="Sessões de inventário" description="Selecione uma sessão em andamento para lançar contagens. Uma combinação de material, endereço e lote só pode ser contada uma vez por sessão.">
+      <div className="grid gap-3 sm:grid-cols-2">
+        <SelectField label="Sessão selecionada" value={selectedInventoryId} onChange={setSelectedInventoryId} options={inventorySessions.map(session=>({value:session.id,label:`${new Date(session.created_at).toLocaleDateString("pt-BR")} · ${session.description||"Inventário"} · ${session.status==="concluido"?"Concluído":"Em andamento"}`}))}/>
+        {selectedInventory&&<div className="rounded-lg border bg-muted/30 p-3 text-sm"><p className="font-semibold">{selectedInventory.description||"Inventário"}</p><p className="mt-1 text-muted-foreground">{warehouses.find(w=>w.id===selectedInventory.warehouse_id)?.name??"Todos os armazéns"} · {selectedInventory.status==="concluido"?"Concluído":"Em andamento"}</p><p className="mt-1 text-xs text-muted-foreground">{selectedInventoryItems.length} contagem(ns) · {selectedInventoryItems.filter(item=>Number(item.difference)!==0).length} divergência(s)</p></div>}
+      </div>
+      {!inventorySessions.length?<Empty>Nenhum inventário registrado. Crie uma sessão acima para começar.</Empty>:null}
+      {selectedInventory&&selectedInventory.status==="em_andamento"&&canOperate&&<div className="mt-4 border-t pt-4"><h3 className="mb-3 text-sm font-semibold">Registrar contagem física</h3><AdjustmentForm countId={selectedInventory.id} warehouseId={selectedInventory.warehouse_id} orgId={orgId} materials={materials} locations={locations} saving={saving} onSave={runSave} onDone={refresh}/></div>}
+      {selectedInventory&&selectedInventory.status==="concluido"&&<p className="mt-4 rounded-lg bg-muted p-3 text-sm text-muted-foreground">Esta sessão foi concluída e não aceita novas contagens.</p>}
+      {selectedInventory&&selectedInventory.status==="em_andamento"&&canOperate&&(canManage||selectedInventory.created_by===user?.id)&&<div className="mt-4 flex justify-end"><button type="button" disabled={saving} onClick={()=>void runSave(async()=>{const {data,error}=await db.from("inventory_counts").update({status:"concluido",completed_at:new Date().toISOString()}).eq("id",selectedInventory.id).eq("org_id",orgId).eq("status","em_andamento").select("id").single();if(error||!data)throw error??new Error("Não foi possível concluir o inventário.");},"Inventário concluído. O histórico foi preservado.")} className="rounded-lg border border-primary/40 px-4 py-2 text-sm font-semibold text-primary disabled:opacity-50"><Check className="mr-2 inline h-4 w-4"/>Concluir inventário</button></div>}
+    </Panel>
+
+    {selectedInventory&&<Panel title="Contagens registradas" description="O saldo esperado, a quantidade contada e a diferença ficam vinculados à sessão.">
+      <Table headers={["Material","Endereço","Lote","Esperado","Contado","Diferença","Motivo","Data"]} rows={selectedInventoryItems.map(item=>[pretty(materials.find(m=>m.id===item.material_id)?.code),pretty(locations.find(l=>l.id===item.location_id)?.code),pretty(item.lot),item.expected_qty,item.counted_qty,<span className={Number(item.difference)===0?"text-emerald-700":"font-semibold text-amber-700"}>{item.difference}</span>,pretty(item.reason),new Date(item.created_at).toLocaleString("pt-BR")])}/>
+    </Panel>}
+
+    <Panel title="Histórico de sessões" description="Inventários concluídos e em andamento, com total de contagens e divergências.">
+      <Table headers={["Data","Descrição","Armazém","Status","Contagens","Divergências"]} rows={inventorySessions.map(session=>{const items=counts.filter(item=>item.count_id===session.id);return [new Date(session.created_at).toLocaleString("pt-BR"),pretty(session.description),warehouses.find(w=>w.id===session.warehouse_id)?.name??"Todos os armazéns",statusPill(session.status),items.length,items.filter(item=>Number(item.difference)!==0).length];})}/>
+    </Panel>
   </div>;
 
   const tasksSection = <div className="space-y-5">
@@ -389,12 +723,17 @@ function Index() {
 
   const exportsSection = <div className="space-y-5">
     <Panel title="Preparar exportação" description="Gera arquivos a partir dos dados consultados. Isso não sincroniza nem importa dados em um ERP.">
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><SelectField label="Conjunto de dados" value={exportForm.dataset} onChange={v=>setExportForm({...exportForm,dataset:v,template_id:""})} options={Object.entries(datasets).map(([value,d])=>({value,label:d.label}))}/><SelectField label="Formato" value={exportForm.format} onChange={v=>setExportForm({...exportForm,format:v})} options={[{value:"csv",label:"CSV"},{value:"xlsx",label:"XLSX"},{value:"json",label:"JSON"}]}/><Field label="Delimitador CSV" value={exportForm.delimiter} onChange={v=>setExportForm({...exportForm,delimiter:v||";"})}/><SelectField label="Modelo salvo" value={exportForm.template_id} onChange={v=>{const t=templates.find(x=>x.id===v);setExportForm({...exportForm,template_id:v,template_name:t?.name??""});if(t?.config?.fields)setSelectedFields(t.config.fields);if(t?.config?.delimiter)setExportForm(prev=>({...prev,template_id:v,template_name:t.name,delimiter:t.config.delimiter}));}} options={templates.filter(t=>t.dataset===exportForm.dataset).map(t=>({value:t.id,label:t.name}))}/></div>
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><SelectField label="Conjunto de dados" value={exportForm.dataset} onChange={v=>setExportForm({...exportForm,dataset:v,template_id:""})} options={Object.entries(datasets).map(([value,d])=>({value,label:d.label}))}/><SelectField label="Formato" value={exportForm.format} onChange={v=>setExportForm({...exportForm,format:v})} options={[{value:"csv",label:"CSV"},{value:"xlsx",label:"XLSX"},{value:"json",label:"JSON"}]}/><SelectField label="Delimitador CSV" value={exportForm.delimiter} onChange={v=>setExportForm({...exportForm,delimiter:v})} options={[{value:";",label:"Ponto e vírgula (;)"},{value:",",label:"Vírgula (,)"},{value:"|",label:"Barra vertical (|)"},{value:"\t",label:"Tabulação"}]}/><SelectField label="Formato de data" value={exportForm.date_format} onChange={v=>setExportForm({...exportForm,date_format:v})} options={[{value:"ISO",label:"ISO (AAAA-MM-DD)"},{value:"BR",label:"Brasil (DD/MM/AAAA)"}]}/><SelectField label="Modelo salvo" value={exportForm.template_id} onChange={v=>{const t=templates.find(x=>x.id===v);setExportForm({...exportForm,template_id:v,template_name:t?.name??""});setExportFieldMappings(t?.config?.mappings??{});if(t?.config?.fields)setSelectedFields(t.config.fields);if(t?.config?.delimiter)setExportForm(prev=>({...prev,template_id:v,template_name:t.name,delimiter:t.config.delimiter}));}} options={templates.filter(t=>t.dataset===exportForm.dataset).map(t=>({value:t.id,label:t.name}))}/></div>
       <div className="mt-4"><h3 className="mb-2 text-sm font-semibold">Campos a exportar (selecione a ordem abaixo)</h3><div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{datasets[exportForm.dataset]!.fields.map(f=><label key={f} className="flex items-center gap-2 rounded-lg border px-3 py-2 text-sm"><input type="checkbox" checked={selectedFields.includes(f)} onChange={e=>setSelectedFields(old=>e.target.checked?[...old,f]:old.filter(x=>x!==f))}/>{f}</label>)}</div><p className="mt-2 text-xs text-muted-foreground">A ordem dos campos selecionados determina a ordem das colunas. Os modelos são personalizados, não layouts oficiais de ERP.</p></div>
-      {canManage&&<div className="mt-4 flex flex-wrap items-end gap-3"><div className="w-full max-w-sm"><Field label="Nome do modelo para salvar" value={exportForm.template_name} onChange={v=>setExportForm({...exportForm,template_name:v})} placeholder="Ex.: Modelo ERP interno"/></div><button className="h-10 rounded-lg border px-4 text-sm font-medium" disabled={!exportForm.template_name.trim()||selectedFields.length===0||saving} onClick={()=>void runSave(async()=>{const payload={org_id:orgId,name:exportForm.template_name.trim(),dataset:exportForm.dataset,created_by:user?.id,config:{fields:selectedFields,delimiter:exportForm.delimiter,date_format:exportForm.date_format,format:exportForm.format},updated_at:new Date().toISOString()};const {error}=await db.from("export_templates").insert(payload);if(error)throw error;setExportForm({...exportForm,template_name:""});},"Modelo de exportação salvo.")}>Salvar modelo</button></div>}
-      <div className="mt-4 max-w-sm"><Field label="Filtro textual da prévia" value={search} onChange={setSearch} placeholder="Filtrar registros carregados"/></div>
-      <div className="mt-5 flex flex-wrap items-center gap-3"><button className="flex h-10 items-center gap-2 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground" disabled={loading||selectedFields.length===0} onClick={async()=>{setDataError("");try{const d=datasets[exportForm.dataset]!;const {data,error}=await db.from(d.table).select("*").eq("org_id",orgId).limit(5000);if(error)throw error;const rows=(data??[]).map((row:AnyRow)=>Object.fromEntries(selectedFields.map(f=>[f,row[f]??""])));const query=search.trim().toLowerCase();const filteredRows=query?rows.filter((row:AnyRow)=>Object.values(row).some(v=>String(v??"").toLowerCase().includes(query))):rows;setPreview(filteredRows);notify(`Prévia carregada: ${filteredRows.length} registro(s) após filtro. Limite consultado: 5.000 registros.`);}catch(e){fail(e);}}}><Search className="h-4 w-4"/> Pré-visualizar</button><button className="flex h-10 items-center gap-2 rounded-lg border px-4 text-sm font-semibold" disabled={preview.length===0||!orgId} onClick={()=>void (async()=>{try{const columns=selectedFields;const safeName=datasets[exportForm.dataset]!.label.toLowerCase().replace(/[^a-z0-9]+/g,"-");if(exportForm.format==="json"){downloadBlob(new Blob([JSON.stringify(preview,null,2)],{type:"application/json;charset=utf-8"}),`armazen-${safeName}.json`);}else if(exportForm.format==="xlsx"){const sheet=XLSX.utils.json_to_sheet(preview,{header:columns});const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,sheet,"Dados");const out=XLSX.write(wb,{bookType:"xlsx",type:"array"});downloadBlob(new Blob([out],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}),`armazen-${safeName}.xlsx`);}else{const esc=(v:unknown)=>{const s=String(v??"");return `"${s.replace(/"/g,'""')}"`;};const csv=[columns.map(esc).join(exportForm.delimiter||";"),...preview.map(r=>columns.map(c=>esc(r[c])).join(exportForm.delimiter||";"))].join("\r\n");downloadBlob(new Blob(["\ufeff",csv],{type:"text/csv;charset=utf-8"}),`armazen-${safeName}.csv`);}if(user&&orgId){const {error}=await db.from("export_history").insert({org_id:orgId,user_id:user.id,dataset:exportForm.dataset,format:exportForm.format,record_count:preview.length,filters:{fields:selectedFields,delimiter:exportForm.delimiter},template_id:exportForm.template_id||null,template_name:exportForm.template_name||null});if(error)throw error;}notify("Arquivo gerado. A geração não significa que o ERP recebeu ou importou os dados.");refresh();}catch(e){fail(e);}})()}><Download className="h-4 w-4"/> Gerar arquivo</button><span className="text-sm text-muted-foreground">{preview.length} registro(s) na prévia</span></div>
-      {preview.length>0&&<div className="mt-4"><Table headers={selectedFields} rows={preview.slice(0,10).map(row=>selectedFields.map(f=>pretty(row[f])))}/><p className="mt-2 text-xs text-muted-foreground">Exibindo até 10 linhas de prévia. O arquivo pode conter até 5.000 registros nesta versão.</p></div>}
+      <div className="mt-4 rounded-lg border p-4">
+        <h3 className="text-sm font-semibold">Mapeamento de campos para o ERP</h3>
+        <p className="mt-1 text-xs text-muted-foreground">Informe o nome da coluna no arquivo de destino. Por padrão, o nome original do campo é mantido.</p>
+        <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{selectedFields.map(field=><Field key={field} label={`Destino de: ${field}`} value={exportFieldMappings[field]??field} onChange={value=>setExportFieldMappings(current=>({...current,[field]:value}))} required/>)}</div>
+      </div>
+      {canManage&&<div className="mt-4 flex flex-wrap items-end gap-3"><div className="w-full max-w-sm"><Field label="Nome do modelo para salvar" value={exportForm.template_name} onChange={v=>setExportForm({...exportForm,template_name:v})} placeholder="Ex.: Modelo ERP interno"/></div><button className="h-10 rounded-lg border px-4 text-sm font-medium" disabled={!exportForm.template_name.trim()||selectedFields.length===0||saving} onClick={()=>void runSave(async()=>{const payload={org_id:orgId,name:exportForm.template_name.trim(),dataset:exportForm.dataset,created_by:user?.id,config:{fields:selectedFields,mappings:exportFieldMappings,delimiter:exportForm.delimiter,date_format:exportForm.date_format,format:exportForm.format},updated_at:new Date().toISOString()};const {error}=await db.from("export_templates").insert(payload);if(error)throw error;setExportForm({...exportForm,template_name:""});},"Modelo de exportação salvo.")}>Salvar modelo</button></div>}
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><Field label={exportForm.dataset==="balances"?"Atualizado a partir de":"Criado a partir de"} type="date" value={exportFromDate} onChange={setExportFromDate}/><Field label={exportForm.dataset==="balances"?"Atualizado até":"Criado até"} type="date" value={exportToDate} onChange={setExportToDate}/><div className="sm:col-span-2"><Field label="Filtro textual da prévia" value={search} onChange={setSearch} placeholder="Filtrar registros carregados"/></div></div>
+      <div className="mt-5 flex flex-wrap items-center gap-3"><button className="flex h-10 items-center gap-2 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground" disabled={loading||selectedFields.length===0} onClick={async()=>{setDataError("");try{const d=datasets[exportForm.dataset]!;if(exportFromDate&&exportToDate&&exportFromDate>exportToDate)throw new Error("A data inicial não pode ser posterior à data final.");const targetFields=selectedFields.map(field=>(exportFieldMappings[field]??"").trim()||field);if(new Set(targetFields.map(field=>field.toLowerCase())).size!==targetFields.length)throw new Error("Os nomes de destino precisam ser únicos.");const dateColumn=exportForm.dataset==="balances"?"updated_at":"created_at";const dateFrom=exportFromDate?new Date(`${exportFromDate}T00:00:00`).toISOString():null;const dateTo=exportToDate?new Date(`${exportToDate}T23:59:59.999`).toISOString():null;const sourceRows:AnyRow[]=[];for(let offset=0;offset<5000;offset+=1000){let request=db.from(d.table).select("*").eq("org_id",orgId);if(dateFrom)request=request.gte(dateColumn,dateFrom);if(dateTo)request=request.lte(dateColumn,dateTo);const {data,error}=await request.order(dateColumn,{ascending:true}).range(offset,Math.min(offset+999,4999));if(error)throw error;const pageRows=data??[];sourceRows.push(...pageRows);if(pageRows.length<1000)break;}const rows=sourceRows.map((row:AnyRow)=>Object.fromEntries(selectedFields.map((field,index)=>[targetFields[index],row[field]??""])));const query=search.trim().toLowerCase();const filteredRows=query?rows.filter((row:AnyRow)=>Object.values(row).some(v=>String(v??"").toLowerCase().includes(query))):rows;const missing=filteredRows.reduce((total:number,row:AnyRow)=>total+Object.values(row).filter(value=>value==null||String(value).trim()==="").length,0);const requiredFields=(mandatoryExportFields[exportForm.dataset]??[]).filter(field=>selectedFields.includes(field));const missingRequired=filteredRows.reduce((total:number,row:AnyRow)=>total+requiredFields.filter(field=>{const mappedField=targetFields[selectedFields.indexOf(field)];const value=row[mappedField];return value==null||String(value).trim()==="";}).length,0);setExportMissingValues(missing);setExportMissingRequired(missingRequired);setPreview(filteredRows);notify(`Prévia carregada: ${filteredRows.length} registro(s); ${missingRequired} campo(s) obrigatório(s) vazio(s). Limite consultado: 5.000 registros.`);}catch(e){fail(e);}}}><Search className="h-4 w-4"/> Pré-visualizar</button><button className="flex h-10 items-center gap-2 rounded-lg border px-4 text-sm font-semibold" disabled={preview.length===0||!orgId} onClick={()=>void runSave(async()=>{if(!preview.length)throw new Error("Gere uma prévia com ao menos um registro antes de exportar.");if(exportForm.format==="csv"&&(!exportForm.delimiter||exportForm.delimiter.length!==1))throw new Error("Escolha um delimitador CSV de um único caractere.");const safeName=datasets[exportForm.dataset]!.label.toLowerCase().replace(/[^a-z0-9]+/g,"-");const output=buildExportBlob(exportForm.format,preview,exportForm.delimiter,exportForm.date_format);if(user&&orgId){const {error}=await db.from("export_history").insert({org_id:orgId,user_id:user.id,dataset:exportForm.dataset,format:exportForm.format,record_count:preview.length,filters:{fields:selectedFields,mappings:exportFieldMappings,delimiter:exportForm.delimiter,date_format:exportForm.date_format,from:exportFromDate,to:exportToDate},template_id:exportForm.template_id||null,template_name:exportForm.template_name||null});if(error)throw error;}downloadBlob(output.blob,`armaZen-${safeName}.${output.extension}`);},"Arquivo gerado. A geração não significa que o ERP recebeu ou importou os dados.")}><Download className="h-4 w-4"/> Gerar arquivo</button><span className="text-sm text-muted-foreground">{preview.length} registro(s) na prévia</span></div>
+      {preview.length>0&&<div className="mt-4"><div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs"><span className="text-muted-foreground">Exibindo até 10 linhas da prévia; limite de 5.000 registros carregados.</span><div className="flex flex-wrap gap-3"><span className={exportMissingValues?"font-medium text-amber-700":"text-emerald-700"}>{exportMissingValues} campo(s) vazio(s) na seleção</span><span className={exportMissingRequired?"font-medium text-destructive":"text-emerald-700"}>{exportMissingRequired} obrigatório(s) vazio(s)</span></div></div><Table headers={Object.keys(preview[0]??{})} rows={preview.slice(0,10).map(row=>Object.keys(preview[0]??{}).map(field=>pretty(row[field])))}/></div>}
     </Panel>
     <Panel title="Histórico de exportações" description="Auditoria das gerações de arquivo registradas no banco."><Table headers={["Data","Conjunto","Formato","Registros","Modelo","Usuário"]} rows={history.map(h=>[new Date(h.created_at).toLocaleString("pt-BR"),datasets[h.dataset]?.label??h.dataset,h.format,h.record_count,pretty(h.template_name),pretty(h.user_id)])}/></Panel>
   </div>;
@@ -402,24 +741,50 @@ function Index() {
   const settingsSection = <div className="space-y-5">
     <Panel title="Organização e permissões" description="Papéis: consulta, operação e gestão. A autorização real deve ser garantida também por RLS e funções do PostgreSQL.">
       <div className="mb-4 grid gap-3 sm:grid-cols-3"><div className="rounded-lg border p-4"><p className="text-xs text-muted-foreground">Organização atual</p><p className="mt-1 font-semibold">{orgName||"Não identificada"}</p></div><div className="rounded-lg border p-4"><p className="text-xs text-muted-foreground">Seu perfil</p><p className="mt-1 font-semibold capitalize">{role||"Não identificado"}</p></div><div className="rounded-lg border p-4"><p className="text-xs text-muted-foreground">Usuário autenticado</p><p className="mt-1 truncate font-semibold">{user?.email||"Sessão não identificada"}</p></div></div>
-      {canManage&&<form className="mb-5 grid gap-3 sm:grid-cols-3" onSubmit={e=>{e.preventDefault();void runSave(async()=>{const {error}=await db.rpc("add_member_by_email",{_email:memberForm.email.trim(),_org:orgId,_role:memberForm.role});if(error)throw error;setMemberForm({email:"",role:"operacao"});},"Solicitação de associação concluída.");}}><Field label="E-mail do usuário existente" value={memberForm.email} onChange={v=>setMemberForm({...memberForm,email:v})} required/><SelectField label="Papel" value={memberForm.role} onChange={v=>setMemberForm({...memberForm,role:v})} options={[{value:"consulta",label:"Consulta"},{value:"operacao",label:"Operação"},{value:"gestao",label:"Gestão"}]} required/><div className="flex items-end"><button disabled={saving} className="h-10 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground"><Users className="mr-2 inline h-4 w-4"/>Associar usuário</button></div></form>}
+      {canManage&&!isDemoWorkspace&&<form className="mb-5 grid gap-3 sm:grid-cols-3" onSubmit={e=>{e.preventDefault();void runSave(async()=>{const {error}=await db.rpc("add_member_by_email",{_email:memberForm.email.trim(),_org:orgId,_role:memberForm.role});if(error)throw error;setMemberForm({email:"",role:"operacao"});},"Solicitação de associação concluída.");}}><Field label="E-mail do usuário existente" value={memberForm.email} onChange={v=>setMemberForm({...memberForm,email:v})} required/><SelectField label="Papel" value={memberForm.role} onChange={v=>setMemberForm({...memberForm,role:v})} options={[{value:"consulta",label:"Consulta"},{value:"operacao",label:"Operação"},{value:"gestao",label:"Gestão"}]} required/><div className="flex items-end"><button disabled={saving} className="h-10 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground"><Users className="mr-2 inline h-4 w-4"/>Associar usuário</button></div></form>}
+      {canManage&&isDemoWorkspace&&<p className="mb-4 rounded-lg border border-primary/20 bg-primary/5 p-3 text-sm text-muted-foreground">Este ambiente é uma demonstração pública. A equipe é fixa nos três perfis pré-configurados; contas externas não podem ser associadas.</p>}
       {!canManage&&<p className="mb-4 text-sm text-muted-foreground">A associação de usuários está disponível apenas para o perfil Gestão.</p>}
-      <Table headers={["Nome","E-mail","Papel","Desde"]} rows={members.map(m=>[pretty(m.profiles?.full_name),pretty(m.profiles?.email),statusPill(m.role),dateLabel(m.created_at)])}/>
+      <Table headers={["Nome","E-mail","Papel","Desde","Ações"]} rows={members.map(m=>[pretty(m.profiles?.full_name),pretty(m.profiles?.email),statusPill(m.role),dateLabel(m.created_at),m.user_id===user?.id?"Sessão atual":reservedDemoEmails.has(String(m.profiles?.email??"").toLowerCase())?<span className="rounded-md bg-primary/10 px-2 py-1 text-xs font-medium text-primary">Perfil de demonstração · fixo</span>:<div className="flex flex-wrap items-center gap-2"><select aria-label={`Papel de ${m.profiles?.email??m.user_id}`} className="h-9 max-w-32 rounded-md border bg-background px-2 text-xs" value={m.role} onChange={event=>{const nextRole=event.target.value;if(nextRole===m.role)return;if(!window.confirm(`Alterar o perfil deste membro para ${nextRole}?`))return;void runSave(async()=>{const {error}=await db.rpc("set_member_role",{_member:m.id,_role:nextRole});if(error)throw error;},"Perfil do membro atualizado.");}}><option value="consulta">Consulta</option><option value="operacao">Operação</option><option value="gestao">Gestão</option></select><button type="button" title="Remover membro" className="rounded-md border px-2 py-2 text-xs hover:bg-destructive/5" onClick={()=>{if(!window.confirm(`Remover ${m.profiles?.email??"este membro"} da organização?`))return;void runSave(async()=>{const {error}=await db.rpc("remove_member",{_member:m.id});if(error)throw error;},"Membro removido.");}}><Ban className="h-3.5 w-3.5"/></button></div>])}/>
     </Panel>
-    <Panel title="Notas de segurança e configuração" description="O protótipo não possui um formulário de login nesta tela, conforme solicitado.">
-      <ul className="list-disc space-y-2 pl-5 text-sm text-muted-foreground"><li>O acesso às operações depende de uma sessão Supabase já autenticada e do vínculo com a organização.</li><li>Não é seguro desativar RLS para fazer o dashboard funcionar.</li><li>O primeiro administrador deve ser associado por procedimento seguro no backend; não use senha padrão ou chave service_role no navegador.</li><li>O repositório contém tipos TypeScript para funções transacionais, mas a existência dos tipos não comprova que as migrações estejam aplicadas ao projeto Supabase conectado.</li></ul>
+    <Panel title="Campos adicionais de materiais" description="Configure informações que aparecem no cadastro de materiais sem exigir edição do código.">
+      <form className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4" onSubmit={e=>{e.preventDefault();void runSave(async()=>{
+        const key=attributeForm.key.trim().toLowerCase().replace(/[^a-z0-9]+/g,"_").replace(/^_+|_+$/g,"");
+        if(!/^[a-z][a-z0-9_]{0,39}$/.test(key))throw new Error("Use uma chave iniciada por letra, com letras minúsculas, números ou sublinhados.");
+        if(!attributeForm.label.trim())throw new Error("Informe o nome do campo.");
+        if(attributeForm.id){
+          const {error}=await db.from("material_attributes").update({label:attributeForm.label.trim(),data_type:attributeForm.data_type,required:attributeForm.required}).eq("id",attributeForm.id).eq("org_id",orgId);
+          if(error)throw error;
+        }else{
+          const {error}=await db.from("material_attributes").insert({org_id:orgId,key,label:attributeForm.label.trim(),data_type:attributeForm.data_type,required:attributeForm.required});
+          if(error)throw error;
+        }
+        setAttributeForm({id:"",key:"",label:"",data_type:"text",required:false});
+      },attributeForm.id?"Campo configurável atualizado.":"Campo configurável criado.");}}>
+        {attributeForm.id?<div className="grid gap-1.5 text-sm"><span className="font-medium">Chave técnica</span><p className="rounded-lg border bg-muted/30 px-3 py-2.5 font-mono text-xs">{attributeForm.key} · chave preservada para manter os dados existentes</p></div>:<Field label="Chave técnica" value={attributeForm.key} onChange={value=>setAttributeForm({...attributeForm,key:value})} required placeholder="Ex.: fabricante"/>}
+        <Field label="Nome exibido" value={attributeForm.label} onChange={value=>setAttributeForm({...attributeForm,label:value})} required placeholder="Ex.: Fabricante"/>
+        <SelectField label="Tipo de dado" value={attributeForm.data_type} onChange={value=>setAttributeForm({...attributeForm,data_type:value})} required options={[{value:"text",label:"Texto"},{value:"number",label:"Número"},{value:"date",label:"Data"},{value:"boolean",label:"Sim / Não"}]}/>
+        <div className="flex items-end justify-between gap-3"><label className="flex h-10 items-center gap-2 text-sm"><input type="checkbox" checked={attributeForm.required} onChange={event=>setAttributeForm({...attributeForm,required:event.target.checked})}/> Obrigatório</label><div className="flex gap-2"><button type="button" className="h-10 rounded-lg border px-3 text-sm" hidden={!attributeForm.id} onClick={()=>setAttributeForm({id:"",key:"",label:"",data_type:"text",required:false})}>Cancelar</button><button className="h-10 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground" disabled={saving}><Plus className="mr-2 inline h-4 w-4"/>{attributeForm.id?"Salvar campo":"Adicionar campo"}</button></div></div>
+      </form>
+      <Table headers={["Chave","Nome","Tipo","Obrigatório","Ações"]} rows={materialAttributes.map(attribute=>[attribute.key,attribute.label,attribute.data_type,attribute.required?"Sim":"Não",<div className="flex gap-2"><button type="button" title="Editar campo" className="rounded-md border px-2 py-2" onClick={()=>setAttributeForm({id:attribute.id,key:attribute.key,label:attribute.label,data_type:attribute.data_type,required:attribute.required})}><Pencil className="h-3.5 w-3.5"/></button><button type="button" title="Excluir campo" className="rounded-md border px-2 py-2 hover:bg-destructive/5" onClick={()=>{if(!window.confirm(`Excluir a configuração do campo "${attribute.label}"? Os valores já gravados nos materiais serão preservados.`))return;void runSave(async()=>{const {error}=await db.from("material_attributes").delete().eq("id",attribute.id).eq("org_id",orgId);if(error)throw error;if(attributeForm.id===attribute.id)setAttributeForm({id:"",key:"",label:"",data_type:"text",required:false});},"Configuração removida; valores históricos preservados.");}}><Ban className="h-3.5 w-3.5"/></button></div>])}/>
+    </Panel>
+    <Panel title="Auditoria da organização" description="Ações relevantes registradas pelo banco; somente Gestão pode consultar estes registros.">
+      <Table headers={["Data","Ação","Entidade","Registro","Usuário"]} rows={auditLogs.slice(0,30).map(log=>[new Date(log.created_at).toLocaleString("pt-BR"),pretty(log.action),pretty(log.entity),pretty(log.entity_id),members.find(member=>member.user_id===log.user_id)?.profiles?.email??(log.user_id?"Usuário sem perfil carregado":"Sistema")])}/>
+      <p className="mt-2 text-xs text-muted-foreground">Exibindo até 30 eventos mais recentes carregados. O conteúdo detalhado dos registros permanece no banco para rastreabilidade.</p>
+    </Panel>
+    <Panel title="Notas de segurança e configuração" description="Ambiente demonstrativo com perfis isolados e dados fictícios.">
+      <ul className="list-disc space-y-2 pl-5 text-sm text-muted-foreground"><li>Consulta, Operação e Gestão usam contas demonstrativas distintas no mesmo ambiente de dados fictícios.</li><li>As permissões são verificadas pelo Supabase Auth e pelas políticas RLS do banco; ocultar botões não substitui a segurança do backend.</li><li>A chave service_role permanece exclusivamente no servidor e nunca é enviada ao navegador.</li><li>A nova migração de perfis demonstrativos e inventário precisa ser aplicada ao projeto Supabase antes de usar os três acessos pela primeira vez.</li></ul>
     </Panel>
   </div>;
 
-  const active = nav.find(n=>n.id===section);
+  const active = visibleNav.find(n=>n.id===section);
   return <div className="min-h-screen bg-background text-foreground md:flex">
     <aside className="flex w-full flex-col border-b bg-[var(--sidebar)] text-[var(--sidebar-foreground)] md:fixed md:inset-y-0 md:w-64 md:border-b-0 md:border-r md:border-[var(--sidebar-border)]">
       <div className="flex items-center gap-3 border-b border-[var(--sidebar-border)] px-5 py-5"><div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary text-primary-foreground"><Warehouse className="h-5 w-5"/></div><div><p className="text-lg font-bold">armaZen</p><p className="text-xs text-[var(--sidebar-muted)]">Sistema de gestão de armazém</p></div></div>
-      <nav aria-label="Navegação principal" className="grid grid-cols-2 gap-1 p-3 sm:grid-cols-3 md:flex md:flex-1 md:flex-col">{nav.map(item=>{const Icon=item.icon;return <button key={item.id} onClick={()=>{setSection(item.id);setSearch("");setMessage("");setDataError("");}} className={`flex items-center gap-2 rounded-lg px-3 py-2.5 text-left text-sm transition-colors ${section===item.id?"bg-[var(--sidebar-accent)] font-semibold text-[var(--sidebar-accent-foreground)]":"text-[var(--sidebar-foreground)]/75 hover:bg-[var(--sidebar-accent)]"}`}><Icon className="h-4 w-4 shrink-0"/><span>{item.label}</span></button>;})}</nav>
+      <nav aria-label="Navegação principal" className="grid grid-cols-2 gap-1 p-3 sm:grid-cols-3 md:flex md:flex-1 md:flex-col">{visibleNav.map(item=>{const Icon=item.icon;return <button key={item.id} onClick={()=>{setSection(item.id);setSearch("");setMessage("");setDataError("");}} className={`flex items-center gap-2 rounded-lg px-3 py-2.5 text-left text-sm transition-colors ${section===item.id?"bg-[var(--sidebar-accent)] font-semibold text-[var(--sidebar-accent-foreground)]":"text-[var(--sidebar-foreground)]/75 hover:bg-[var(--sidebar-accent)]"}`}><Icon className="h-4 w-4 shrink-0"/><span>{item.label}</span></button>;})}</nav>
       <div className="hidden border-t border-[var(--sidebar-border)] p-4 text-xs text-[var(--sidebar-muted)] md:block">Protótipo acadêmico · armaZen</div>
     </aside>
     <main className="min-w-0 flex-1 md:ml-64">
-      <header className="flex flex-wrap items-center justify-between gap-3 border-b bg-card px-5 py-4 sm:px-8"><div><p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Operação / {active?.label}</p><h1 className="mt-1 text-xl font-semibold">{section==="dashboard"?"Visão geral da operação":active?.label}</h1></div><div className="flex items-center gap-4"><div className="text-right"><p className="text-sm font-medium">{orgName||"Organização não identificada"}</p><p className="text-xs capitalize text-muted-foreground">{role||"Sessão / perfil não identificado"}</p></div><button onClick={()=>void supabase.auth.signOut()} className="h-9 rounded-lg border px-3 text-xs font-medium text-muted-foreground hover:bg-muted" title="Sair">Sair</button></div></header>
+      <header className="flex flex-wrap items-center justify-between gap-3 border-b bg-card px-5 py-4 sm:px-8"><div><p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Operação / {active?.label}</p><h1 className="mt-1 text-xl font-semibold">{section==="dashboard"?"Visão geral da operação":active?.label}</h1></div><div className="flex items-center gap-4"><div className="text-right"><p className="text-sm font-medium">{orgName||"Organização não identificada"}</p><p className="text-xs text-muted-foreground">{roleLabel}</p></div><button onClick={()=>void supabase.auth.signOut()} className="h-9 rounded-lg border px-3 text-xs font-medium text-muted-foreground hover:bg-muted" title="Sair">Sair</button></div></header>
       <div className="space-y-4 p-5 sm:p-8">
         {message&&<div role="status" className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3 text-sm">{message}</div>}
         {dataError&&<div role="alert" className="flex items-start gap-3 rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm"><AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-destructive"/><div className="flex-1">{dataError}</div><button onClick={()=>{setDataError("");refresh();}} className="font-medium underline">Tentar novamente</button></div>}
@@ -428,6 +793,7 @@ function Index() {
         {section==="warehouse"&&warehouseSection}
         {section==="materials"&&materialsSection}
         {section==="movements"&&movementsSection}
+        {section==="inventory"&&inventorySection}
         {section==="tasks"&&tasksSection}
         {section==="exports"&&exportsSection}
         {section==="settings"&&settingsSection}
@@ -437,10 +803,11 @@ function Index() {
   </div>;
 }
 
-function AdjustmentForm({ orgId, materials, locations, saving, onSave, onDone }: {
+function AdjustmentForm({ orgId, materials, locations, saving, onSave, onDone, countId, warehouseId }: {
   orgId: string; materials: AnyRow[]; locations: AnyRow[]; saving: boolean;
   onSave: (fn:()=>Promise<unknown>, success:string)=>Promise<void>; onDone:()=>void;
+  countId?: string; warehouseId?: string | null;
 }) {
   const [form,setForm]=useState({material_id:"",location_id:"",lot:"",counted:"0",reason:""});
-  return <form className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3" onSubmit={e=>{e.preventDefault();void onSave(async()=>{if(!form.material_id||!form.location_id)throw new Error("Selecione material e endereço.");if(!form.reason.trim())throw new Error("Informe o motivo do ajuste.");const counted=Number(form.counted);if(!Number.isFinite(counted)||counted<0)throw new Error("A contagem precisa ser zero ou maior.");const {error}=await db.rpc("register_adjustment",{_material:form.material_id,_location:form.location_id,_lot:form.lot||"",_counted:counted,_reason:form.reason.trim(),_org:orgId});if(error)throw error;setForm({material_id:"",location_id:"",lot:"",counted:"0",reason:""});onDone();},"Ajuste de inventário registrado.");}}><SelectField label="Material" value={form.material_id} onChange={v=>setForm({...form,material_id:v})} required options={materials.filter(m=>m.status==="ativo"||m.status==="active").map(m=>({value:m.id,label:`${m.code} — ${m.description}`}))}/><SelectField label="Endereço" value={form.location_id} onChange={v=>setForm({...form,location_id:v})} required options={locations.filter(l=>l.active&&l.status!=="bloqueado").map(l=>({value:l.id,label:`${l.code} — ${l.name}`}))}/><Field label="Lote" value={form.lot} onChange={v=>setForm({...form,lot:v})}/><Field label="Quantidade contada" type="number" min={0} step={0.01} value={form.counted} onChange={v=>setForm({...form,counted:v})} required/><Field label="Motivo obrigatório" value={form.reason} onChange={v=>setForm({...form,reason:v})} required/><div className="flex items-end"><button disabled={saving} className="h-10 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground">Registrar ajuste</button></div></form>;
+  return <form className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3" onSubmit={e=>{e.preventDefault();void onSave(async()=>{if(!form.material_id||!form.location_id)throw new Error("Selecione material e endereço.");if(!form.reason.trim())throw new Error("Informe o motivo do ajuste.");const counted=Number(form.counted);if(!Number.isFinite(counted)||counted<0)throw new Error("A contagem precisa ser zero ou maior.");const rpcArgs={_material:form.material_id,_location:form.location_id,_lot:form.lot||"",_counted:counted,_reason:form.reason.trim(),_org:orgId,...(countId?{_count:countId}:{})};const {error}=await db.rpc("register_adjustment",rpcArgs);if(error)throw error;setForm({material_id:"",location_id:"",lot:"",counted:"0",reason:""});onDone();},"Ajuste de inventário registrado.");}}><SelectField label="Material" value={form.material_id} onChange={v=>setForm({...form,material_id:v})} required options={materials.filter(m=>m.status==="ativo"||m.status==="active").map(m=>({value:m.id,label:`${m.code} — ${m.description}`}))}/><SelectField label="Endereço" value={form.location_id} onChange={v=>setForm({...form,location_id:v})} required options={locations.filter(l=>l.active&&l.status!=="bloqueado"&&(!warehouseId||l.warehouse_id===warehouseId)).map(l=>({value:l.id,label:`${l.code} — ${l.name}`}))}/><Field label="Lote" value={form.lot} onChange={v=>setForm({...form,lot:v})}/><Field label="Quantidade contada" type="number" min={0} step={0.01} value={form.counted} onChange={v=>setForm({...form,counted:v})} required/><Field label="Motivo obrigatório" value={form.reason} onChange={v=>setForm({...form,reason:v})} required/><div className="flex items-end"><button disabled={saving} className="h-10 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground">Registrar ajuste</button></div></form>;
 }
