@@ -5,7 +5,7 @@ import * as XLSX from "xlsx";
 import {
   Activity, AlertTriangle, ArrowLeftRight, Boxes, CheckCircle2, ClipboardCheck,
   ClipboardList, Download, LayoutDashboard, MapPinned, Package, Plus, RefreshCw,
-  ShieldCheck, Warehouse, Pencil, Search, Ban, Check, Users, CalendarCheck,
+  ShieldCheck, Warehouse, Pencil, Search, Ban, Check, Users,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { startDemoSession, type DemoRole } from "@/integrations/supabase/admin-auth";
@@ -210,7 +210,7 @@ function Index() {
         .catch(() => { if (alive) { setUser(null); setDataError("Não foi possível verificar a sessão do Supabase."); } });
       const { data } = supabase.auth.onAuthStateChange((_event, session) => {
         setUser(session?.user ?? null);
-        if (!session) { setOrgId(""); setOrgName(""); setRole(""); }
+        if (!session) { setOrgId(""); setOrgName(""); setRole(""); setSection("dashboard"); }
       });
       return () => { alive = false; data.subscription.unsubscribe(); };
     } catch (e) { setDataError(errorMessage(e)); setUser(null); return () => { alive = false; }; }
@@ -427,6 +427,14 @@ function Index() {
     return path;
   }, [mapParentId, selectedMapWarehouseId, locations]);
 
+  useEffect(() => {
+    if (!user || role === "consulta") {
+      if (section === "inventory" || section === "exports" || section === "settings") setSection("dashboard");
+    } else if (role === "operacao" && (section === "exports" || section === "settings")) {
+      setSection("dashboard");
+    }
+  }, [user, role, section]);
+
   // Show loading splash while checking session
   if (user === undefined) {
     return (
@@ -490,7 +498,7 @@ function Index() {
 
     <div className="grid gap-4 xl:grid-cols-3">
       <Panel title="Movimentações por tipo" description="Distribuição por tipo no armazém selecionado.">
-        {totals.movementTypeCounts.map(({type,n}: any)=>{const count=totals.movementTypeCounts.find((item: AnyRow)=>item.type===type)?.count??0;const max=Math.max(1,...totals.movementTypeCounts.map((item: AnyRow)=>item.count));return <div key={type} className="mb-3"><div className="mb-1 flex justify-between gap-2 text-sm"><span className="capitalize">{type}</span><span>{count}</span></div><div className="h-2 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-primary" style={{width:`${count/max*100}%`}}/></div></div>;})}
+        {totals.movementTypeCounts.map(({type}: any)=>{const count=totals.movementTypeCounts.find((item: AnyRow)=>item.type===type)?.count??0;const max=Math.max(1,...totals.movementTypeCounts.map((item: AnyRow)=>item.count));return <div key={type} className="mb-3"><div className="mb-1 flex justify-between gap-2 text-sm"><span className="capitalize">{type}</span><span>{count}</span></div><div className="h-2 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-primary" style={{width:`${count/max*100}%`}}/></div></div>;})}
       </Panel>
       <Panel title="Situação das tarefas" description="Distribuição das tarefas no escopo selecionado.">
         {taskStatuses.map(status=>{const relevantTasks=tasks.filter(t=>(dashboardWarehouseId==="todos"||(t.location_id&&locations.some(l=>l.id===t.location_id&&l.warehouse_id===dashboardWarehouseId)))&&t.status===status);const count=relevantTasks.length;const max=Math.max(1,...taskStatuses.map(s=>tasks.filter(t=>(dashboardWarehouseId==="todos"||(t.location_id&&locations.some(l=>l.id===t.location_id&&l.warehouse_id===dashboardWarehouseId)))&&t.status===s).length));return <div key={status} className="mb-3"><div className="mb-1 flex justify-between gap-2 text-sm"><span>{status.replaceAll("_"," ")}</span><span>{count}</span></div><div className="h-2 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-primary" style={{width:`${count/max*100}%`}}/></div></div>;})}
@@ -611,7 +619,7 @@ function Index() {
       {!inventorySessions.length?<Empty>Nenhum inventário registrado. Crie uma sessão acima para começar.</Empty>:null}
       {selectedInventory&&selectedInventory.status==="em_andamento"&&canOperate&&<div className="mt-4 border-t pt-4"><h3 className="mb-3 text-sm font-semibold">Registrar contagem física</h3><AdjustmentForm countId={selectedInventory.id} warehouseId={selectedInventory.warehouse_id} orgId={orgId} materials={materials} locations={locations} saving={saving} onSave={runSave} onDone={refresh}/></div>}
       {selectedInventory&&selectedInventory.status==="concluido"&&<p className="mt-4 rounded-lg bg-muted p-3 text-sm text-muted-foreground">Esta sessão foi concluída e não aceita novas contagens.</p>}
-      {selectedInventory&&selectedInventory.status==="em_andamento"&&canManage&&<div className="mt-4 flex justify-end"><button type="button" disabled={saving} onClick={()=>void runSave(async()=>{const {data,error}=await db.from("inventory_counts").update({status:"concluido",completed_at:new Date().toISOString()}).eq("id",selectedInventory.id).eq("org_id",orgId).eq("status","em_andamento").select("id").single();if(error||!data)throw error??new Error("Não foi possível concluir o inventário.");},"Inventário concluído. O histórico foi preservado.")} className="rounded-lg border border-primary/40 px-4 py-2 text-sm font-semibold text-primary disabled:opacity-50"><Check className="mr-2 inline h-4 w-4"/>Concluir inventário</button></div>}
+      {selectedInventory&&selectedInventory.status==="em_andamento"&&canOperate&&<div className="mt-4 flex justify-end"><button type="button" disabled={saving} onClick={()=>void runSave(async()=>{const {data,error}=await db.from("inventory_counts").update({status:"concluido",completed_at:new Date().toISOString()}).eq("id",selectedInventory.id).eq("org_id",orgId).eq("status","em_andamento").select("id").single();if(error||!data)throw error??new Error("Não foi possível concluir o inventário.");},"Inventário concluído. O histórico foi preservado.")} className="rounded-lg border border-primary/40 px-4 py-2 text-sm font-semibold text-primary disabled:opacity-50"><Check className="mr-2 inline h-4 w-4"/>Concluir inventário</button></div>}
     </Panel>
 
     {selectedInventory&&<Panel title="Contagens registradas" description="O saldo esperado, a quantidade contada e a diferença ficam vinculados à sessão.">
