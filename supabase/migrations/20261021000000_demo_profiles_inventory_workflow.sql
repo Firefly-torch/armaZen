@@ -278,6 +278,17 @@ begin
 end;
 $;
 
+-- Store the reserved demo workspace by immutable id instead of looking it up
+-- by a user-editable organization name.
+create table public.demo_workspace_registry (
+  singleton boolean primary key default true check (singleton),
+  org_id uuid not null unique references public.organizations(id) on delete restrict,
+  created_at timestamptz not null default now()
+);
+alter table public.demo_workspace_registry enable row level security;
+revoke all on public.demo_workspace_registry from public, anon, authenticated;
+grant all on public.demo_workspace_registry to service_role;
+
 create or replace function public.ensure_demo_workspace(
   _consulta uuid,
   _operacao uuid,
@@ -319,17 +330,17 @@ begin
 
   perform pg_advisory_xact_lock(20261021, 1);
 
-  select id into v_org
-    from public.organizations
-    where name = 'armaZen — Ambiente de demonstração'
-    order by created_at
-    limit 1
+  select org_id into v_org
+    from public.demo_workspace_registry
+    where singleton = true
     for update;
 
   if v_org is null then
     insert into public.organizations(name)
       values ('armaZen — Ambiente de demonstração')
       returning id into v_org;
+    insert into public.demo_workspace_registry(singleton, org_id)
+      values (true, v_org);
   end if;
 
   if not exists (select 1 from public.warehouses where org_id = v_org)
