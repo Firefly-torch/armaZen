@@ -451,31 +451,47 @@ function Index() {
   const statusPill = (text: string) => <span className="rounded-full bg-muted px-2.5 py-1 text-xs font-medium">{text.replaceAll("_", " ")}</span>;
 
   const dashboard = <div className="space-y-6">
-    <div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-base font-semibold">Indicadores operacionais</h2><p className="mt-1 text-sm text-muted-foreground">Calculados a partir dos registros retornados pelo Supabase.</p></div><div className="flex gap-2"><SelectField label="Período" value={period} onChange={setPeriod} options={[{value:"7",label:"7 dias"},{value:"30",label:"30 dias"},{value:"90",label:"90 dias"}]} /><button onClick={refresh} disabled={loading} className="mt-5 flex h-10 items-center gap-2 rounded-lg border px-3 text-sm"><RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} /> Atualizar</button></div></div>
+    <div className="flex flex-wrap items-end justify-between gap-3">
+      <div><h2 className="text-base font-semibold">Indicadores operacionais</h2><p className="mt-1 text-sm text-muted-foreground">Indicadores calculados a partir dos dados salvos no Supabase.</p></div>
+      <div className="flex flex-wrap items-end gap-2">
+        <SelectField label="Período" value={period} onChange={setPeriod} options={[{value:"7",label:"7 dias"},{value:"30",label:"30 dias"},{value:"90",label:"90 dias"}]} />
+        <SelectField label="Armazém" value={dashboardWarehouseId} onChange={setDashboardWarehouseId} options={[{value:"todos",label:"Todos os armazéns"},...warehouses.filter(w=>w.active).map(w=>({value:w.id,label:w.name}))]} />
+        <button onClick={refresh} disabled={loading} className="flex h-10 items-center gap-2 rounded-lg border px-3 text-sm"><RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} /> Atualizar</button>
+      </div>
+    </div>
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
       {[
-        ["Materiais ativos", totals.materials, Package], ["Endereços ativos", totals.locations, MapPinned],
-        ["Unidades em estoque", new Intl.NumberFormat("pt-BR",{maximumFractionDigits:2}).format(totals.units), Boxes],
-        ["Abaixo do mínimo", totals.lowStock, AlertTriangle], [`Movimentações (${period} dias)`, totals.movements, Activity],
-        ["Tarefas em aberto", totals.pending, ClipboardList], ["Tarefas atrasadas", totals.overdue, AlertTriangle],
+        ["Materiais ativos", totals.materials, Package],
+        ["Endereços ativos", totals.locations, MapPinned],
+        ["Saldo por unidade", totals.units, Boxes],
+        ["Ocupação de posições", totals.occupancy === null ? "Sem posições de armazenagem" : `${totals.occupancy}% · ${totals.occupiedLocations}/${totals.storageLocations}`, Warehouse],
+        ["Abaixo do mínimo", totals.lowStock, AlertTriangle],
+        [`Movimentações (${period} dias)`, totals.movements, Activity],
+        ["Tarefas em aberto", totals.pending, ClipboardList],
+        ["Tarefas atrasadas", totals.overdue, AlertTriangle],
         ["Divergências registradas", totals.divergences, CheckCircle2],
-      ].map(([label, value, Icon]: any) => <article key={String(label)} className="rounded-xl border bg-card p-5 shadow-sm"><div className="flex items-center justify-between gap-2"><p className="text-sm text-muted-foreground">{label}</p><span className="rounded-lg bg-muted p-2"><Icon className="h-4 w-4" /></span></div><p className="mt-4 text-3xl font-semibold">{orgId ? value : "—"}</p></article>)}
+      ].map(([label, value, Icon]: any) => <article key={String(label)} className="rounded-xl border bg-card p-5 shadow-sm"><div className="flex items-center justify-between gap-2"><p className="text-sm text-muted-foreground">{label}</p><span className="rounded-lg bg-primary/10 p-2 text-primary"><Icon className="h-4 w-4" /></span></div><p className="mt-4 break-words text-2xl font-semibold">{orgId ? value : "—"}</p></article>)}
     </div>
 
     <div className="grid gap-4 xl:grid-cols-3">
-      <Panel title="Movimentações por tipo" description="Distribuição dos registros carregados.">
-        {movementTypes.map(type=>{const n=movements.filter(m=>m.type===type).length;const max=Math.max(1,...movementTypes.map(t=>movements.filter(m=>m.type===t).length));return <div key={type} className="mb-3"><div className="mb-1 flex justify-between text-sm"><span className="capitalize">{type}</span><span>{n}</span></div><div className="h-2 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-primary" style={{width:`${n/max*100}%`}}/></div></div>;})}
+      <Panel title="Movimentações por tipo" description="Distribuição por tipo no armazém selecionado.">
+        {totals.movementTypeCounts.map(({type,n}: any)=>{const count=totals.movementTypeCounts.find((item: AnyRow)=>item.type===type)?.count??0;const max=Math.max(1,...totals.movementTypeCounts.map((item: AnyRow)=>item.count));return <div key={type} className="mb-3"><div className="mb-1 flex justify-between gap-2 text-sm"><span className="capitalize">{type}</span><span>{count}</span></div><div className="h-2 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-primary" style={{width:`${count/max*100}%`}}/></div></div>;})}
       </Panel>
-      <Panel title="Situação das tarefas" description="Tarefas por coluna do Kanban.">
-        {taskStatuses.map(status=>{const n=tasks.filter(t=>t.status===status).length;const max=Math.max(1,...taskStatuses.map(t=>tasks.filter(x=>x.status===t).length));return <div key={status} className="mb-3"><div className="mb-1 flex justify-between text-sm"><span>{status.replaceAll("_"," ")}</span><span>{n}</span></div><div className="h-2 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-primary" style={{width:`${n/max*100}%`}}/></div></div>;})}
+      <Panel title="Situação das tarefas" description="Distribuição das tarefas no escopo selecionado.">
+        {taskStatuses.map(status=>{const relevantTasks=tasks.filter(t=>(dashboardWarehouseId==="todos"||(t.location_id&&locations.some(l=>l.id===t.location_id&&l.warehouse_id===dashboardWarehouseId)))&&t.status===status);const count=relevantTasks.length;const max=Math.max(1,...taskStatuses.map(s=>tasks.filter(t=>(dashboardWarehouseId==="todos"||(t.location_id&&locations.some(l=>l.id===t.location_id&&l.warehouse_id===dashboardWarehouseId)))&&t.status===s).length));return <div key={status} className="mb-3"><div className="mb-1 flex justify-between gap-2 text-sm"><span>{status.replaceAll("_"," ")}</span><span>{count}</span></div><div className="h-2 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-primary" style={{width:`${count/max*100}%`}}/></div></div>;})}
       </Panel>
-      <Panel title="Situação dos endereços" description="Estados cadastrados; não representa ocupação física.">
-        {locationStatuses.map(status=>{const n=locations.filter(l=>l.active&&l.status===status).length;const max=Math.max(1,...locationStatuses.map(t=>locations.filter(l=>l.active&&l.status===t).length));return <div key={status} className="mb-3"><div className="mb-1 flex justify-between text-sm"><span>{status.replaceAll("_"," ")}</span><span>{n}</span></div><div className="h-2 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-primary" style={{width:`${n/max*100}%`}}/></div></div>;})}
+      <Panel title="Situação dos endereços" description="Contagem dos estados cadastrados, não capacidade física.">
+        {locationStatuses.map(status=>{const count=locations.filter(l=>l.active&&(dashboardWarehouseId==="todos"||l.warehouse_id===dashboardWarehouseId)&&l.status===status).length;const max=Math.max(1,...locationStatuses.map(s=>locations.filter(l=>l.active&&(dashboardWarehouseId==="todos"||l.warehouse_id===dashboardWarehouseId)&&l.status===s).length));return <div key={status} className="mb-3"><div className="mb-1 flex justify-between gap-2 text-sm"><span>{status.replaceAll("_"," ")}</span><span>{count}</span></div><div className="h-2 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-primary" style={{width:`${count/max*100}%`}}/></div></div>;})}
       </Panel>
     </div>
+    <Panel title="Movimentações nos últimos 7 dias" description="Quantidade de registros por dia; não representa volume físico movimentado.">
+      <div className="grid grid-cols-7 gap-2 sm:gap-4">
+        {totals.movementDays.map((day: AnyRow)=>{const max=Math.max(1,...totals.movementDays.map((item: AnyRow)=>item.count));return <div key={day.label} className="flex min-w-0 flex-col items-center gap-2"><span className="text-xs font-medium tabular-nums">{day.count}</span><div className="flex h-24 w-full items-end rounded-md bg-muted p-1"><div className="w-full rounded-sm bg-primary transition-all" style={{height:`${Math.max(day.count===0?0:8,day.count/max*100)}%`}}/></div><span className="text-[10px] capitalize text-muted-foreground sm:text-xs">{day.label}</span></div>;})}
+      </div>
+    </Panel>
     <div className="grid gap-4 xl:grid-cols-2">
-      <Panel title="Movimentações recentes" description="Últimos registros persistidos."><Table headers={["Nº","Tipo","Material","Quantidade","Data"]} rows={movements.slice(0,6).map(m => [pretty(m.number), statusPill(m.type), pretty(materials.find(x=>x.id===m.material_id)?.code), pretty(m.quantity), dateLabel(m.created_at)])} /></Panel>
-      <Panel title="Tarefas prioritárias" description="Tarefas abertas, incluindo prazos vencidos."><Table headers={["Tarefa","Prioridade","Status","Prazo"]} rows={tasks.filter(t=>t.status!=="concluida").sort((a,b)=>Number(new Date(a.due_at||"9999").getTime())-Number(new Date(b.due_at||"9999").getTime())).slice(0,6).map(t=>[t.title,statusPill(t.priority),statusPill(t.status),dateLabel(t.due_at)])} /></Panel>
+      <Panel title="Movimentações recentes" description="Últimos registros persistidos no escopo selecionado."><Table headers={["Nº","Tipo","Material","Quantidade","Data"]} rows={movements.filter(m=>dashboardWarehouseId==="todos"||locations.some(l=>l.warehouse_id===dashboardWarehouseId&&(l.id===m.from_location_id||l.id===m.to_location_id))).slice(0,6).map(m => [pretty(m.number), statusPill(m.type), pretty(materials.find(x=>x.id===m.material_id)?.code), `${pretty(m.quantity)} ${materials.find(x=>x.id===m.material_id)?.unit??""}`, dateLabel(m.created_at)])} /></Panel>
+      <Panel title="Tarefas prioritárias" description="Tarefas abertas, incluindo prazos vencidos."><Table headers={["Tarefa","Prioridade","Status","Prazo"]} rows={tasks.filter(t=>(dashboardWarehouseId==="todos"||(t.location_id&&locations.some(l=>l.id===t.location_id&&l.warehouse_id===dashboardWarehouseId)))&&t.status!=="concluida").sort((a,b)=>Number(new Date(a.due_at||"9999").getTime())-Number(new Date(b.due_at||"9999").getTime())).slice(0,6).map(t=>[t.title,statusPill(t.priority),statusPill(t.status),dateLabel(t.due_at)])} /></Panel>
     </div>
   </div>;
 
