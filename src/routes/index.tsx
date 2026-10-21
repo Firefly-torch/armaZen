@@ -241,7 +241,7 @@ function Index() {
   const [mapSelectedLocationId, setMapSelectedLocationId] = useState("");
   const [selectedInventoryId, setSelectedInventoryId] = useState("");
   const [inventoryForm, setInventoryForm] = useState({ warehouse_id: "", description: "" });
-  const [attributeForm, setAttributeForm] = useState({ key: "", label: "", data_type: "text", required: false });
+  const [attributeForm, setAttributeForm] = useState({ id: "", key: "", label: "", data_type: "text", required: false });
   const [attributeValues, setAttributeValues] = useState<Record<string, string>>({});
 
   const refresh = useCallback(() => setReload(n => n + 1), []);
@@ -715,16 +715,21 @@ function Index() {
         const key=attributeForm.key.trim().toLowerCase().replace(/[^a-z0-9]+/g,"_").replace(/^_+|_+$/g,"");
         if(!/^[a-z][a-z0-9_]{0,39}$/.test(key))throw new Error("Use uma chave iniciada por letra, com letras minúsculas, números ou sublinhados.");
         if(!attributeForm.label.trim())throw new Error("Informe o nome do campo.");
-        const {error}=await db.from("material_attributes").insert({org_id:orgId,key,label:attributeForm.label.trim(),data_type:attributeForm.data_type,required:attributeForm.required});
-        if(error)throw error;
-        setAttributeForm({key:"",label:"",data_type:"text",required:false});
-      },"Campo configurável criado.");}}>
-        <Field label="Chave técnica" value={attributeForm.key} onChange={value=>setAttributeForm({...attributeForm,key:value})} required placeholder="Ex.: fabricante"/>
+        if(attributeForm.id){
+          const {error}=await db.from("material_attributes").update({label:attributeForm.label.trim(),data_type:attributeForm.data_type,required:attributeForm.required}).eq("id",attributeForm.id).eq("org_id",orgId);
+          if(error)throw error;
+        }else{
+          const {error}=await db.from("material_attributes").insert({org_id:orgId,key,label:attributeForm.label.trim(),data_type:attributeForm.data_type,required:attributeForm.required});
+          if(error)throw error;
+        }
+        setAttributeForm({id:"",key:"",label:"",data_type:"text",required:false});
+      },attributeForm.id?"Campo configurável atualizado.":"Campo configurável criado.");}}>
+        {attributeForm.id?<div className="grid gap-1.5 text-sm"><span className="font-medium">Chave técnica</span><p className="rounded-lg border bg-muted/30 px-3 py-2.5 font-mono text-xs">{attributeForm.key} · chave preservada para manter os dados existentes</p></div>:<Field label="Chave técnica" value={attributeForm.key} onChange={value=>setAttributeForm({...attributeForm,key:value})} required placeholder="Ex.: fabricante"/>}
         <Field label="Nome exibido" value={attributeForm.label} onChange={value=>setAttributeForm({...attributeForm,label:value})} required placeholder="Ex.: Fabricante"/>
         <SelectField label="Tipo de dado" value={attributeForm.data_type} onChange={value=>setAttributeForm({...attributeForm,data_type:value})} required options={[{value:"text",label:"Texto"},{value:"number",label:"Número"},{value:"date",label:"Data"},{value:"boolean",label:"Sim / Não"}]}/>
-        <div className="flex items-end justify-between gap-3"><label className="flex h-10 items-center gap-2 text-sm"><input type="checkbox" checked={attributeForm.required} onChange={event=>setAttributeForm({...attributeForm,required:event.target.checked})}/> Obrigatório</label><button className="h-10 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground" disabled={saving}><Plus className="mr-2 inline h-4 w-4"/>Adicionar campo</button></div>
+        <div className="flex items-end justify-between gap-3"><label className="flex h-10 items-center gap-2 text-sm"><input type="checkbox" checked={attributeForm.required} onChange={event=>setAttributeForm({...attributeForm,required:event.target.checked})}/> Obrigatório</label><div className="flex gap-2"><button type="button" className="h-10 rounded-lg border px-3 text-sm" hidden={!attributeForm.id} onClick={()=>setAttributeForm({id:"",key:"",label:"",data_type:"text",required:false})}>Cancelar</button><button className="h-10 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground" disabled={saving}><Plus className="mr-2 inline h-4 w-4"/>{attributeForm.id?"Salvar campo":"Adicionar campo"}</button></div></div>
       </form>
-      <Table headers={["Chave","Nome","Tipo","Obrigatório"]} rows={materialAttributes.map(attribute=>[attribute.key,attribute.label,attribute.data_type,attribute.required?"Sim":"Não"])}/>
+      <Table headers={["Chave","Nome","Tipo","Obrigatório","Ações"]} rows={materialAttributes.map(attribute=>[attribute.key,attribute.label,attribute.data_type,attribute.required?"Sim":"Não",<div className="flex gap-2"><button type="button" title="Editar campo" className="rounded-md border px-2 py-2" onClick={()=>setAttributeForm({id:attribute.id,key:attribute.key,label:attribute.label,data_type:attribute.data_type,required:attribute.required})}><Pencil className="h-3.5 w-3.5"/></button><button type="button" title="Excluir campo" className="rounded-md border px-2 py-2 hover:bg-destructive/5" onClick={()=>{if(!window.confirm(`Excluir a configuração do campo "${attribute.label}"? Os valores já gravados nos materiais serão preservados.`))return;void runSave(async()=>{const {error}=await db.from("material_attributes").delete().eq("id",attribute.id).eq("org_id",orgId);if(error)throw error;if(attributeForm.id===attribute.id)setAttributeForm({id:"",key:"",label:"",data_type:"text",required:false});},"Configuração removida; valores históricos preservados.");}}><Ban className="h-3.5 w-3.5"/></button></div>])}/>
     </Panel>
     <Panel title="Notas de segurança e configuração" description="Ambiente demonstrativo com perfis isolados e dados fictícios.">
       <ul className="list-disc space-y-2 pl-5 text-sm text-muted-foreground"><li>Consulta, Operação e Gestão usam contas demonstrativas distintas no mesmo ambiente de dados fictícios.</li><li>As permissões são verificadas pelo Supabase Auth e pelas políticas RLS do banco; ocultar botões não substitui a segurança do backend.</li><li>A chave service_role permanece exclusivamente no servidor e nunca é enviada ao navegador.</li><li>A nova migração de perfis demonstrativos e inventário precisa ser aplicada ao projeto Supabase antes de usar os três acessos pela primeira vez.</li></ul>
