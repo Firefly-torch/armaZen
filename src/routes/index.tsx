@@ -1,14 +1,14 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { createFileRoute } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useState, type ReactNode, type FormEvent as ReactFormEvent } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import * as XLSX from "xlsx";
 import {
-  Activity, AlertTriangle, ArrowLeftRight, Boxes, CheckCircle2,
+  Activity, AlertTriangle, ArrowLeftRight, Boxes, CheckCircle2, ClipboardCheck,
   ClipboardList, Download, LayoutDashboard, MapPinned, Package, Plus, RefreshCw,
-  ShieldCheck, Warehouse, Pencil, Search, Ban, Check, Users,
+  ShieldCheck, Warehouse, Pencil, Search, Ban, Check, Users, CalendarCheck,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
-import { ensureUserExists } from "@/integrations/supabase/admin-auth";
+import { startDemoSession, type DemoRole } from "@/integrations/supabase/admin-auth";
 import type { User } from "@supabase/supabase-js";
 
 export const Route = createFileRoute("/")({
@@ -25,7 +25,7 @@ export const Route = createFileRoute("/")({
   }),
 });
 
-type Section = "dashboard" | "warehouse" | "materials" | "movements" | "tasks" | "exports" | "settings";
+type Section = "dashboard" | "warehouse" | "materials" | "movements" | "inventory" | "tasks" | "exports" | "settings";
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type AnyRow = any; // untyped database rows in this prototype; keeps dot access allowed
 const db = supabase as any;
@@ -35,6 +35,7 @@ const nav: { id: Section; label: string; icon: typeof Boxes }[] = [
   { id: "warehouse", label: "Armazém e endereçamento", icon: Warehouse },
   { id: "materials", label: "Materiais e estoque", icon: Package },
   { id: "movements", label: "Movimentações", icon: ArrowLeftRight },
+  { id: "inventory", label: "Inventário", icon: ClipboardCheck },
   { id: "tasks", label: "Tarefas operacionais", icon: ClipboardList },
   { id: "exports", label: "Exportação para ERP", icon: Download },
   { id: "settings", label: "Usuários e configurações", icon: ShieldCheck },
@@ -69,9 +70,32 @@ function Panel({ title, description, children, action }: { title: string; descri
 function Empty({ children = "Nenhum registro encontrado." }: { children?: ReactNode }) {
   return <p className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">{children}</p>;
 }
-function Table({ headers, rows }: { headers: string[]; rows: ReactNode[][] }) {
+function Table({ headers, rows, pageSize = 10 }: { headers: string[]; rows: ReactNode[][]; pageSize?: number }) {
+  const [page, setPage] = useState(0);
   if (!rows.length) return <Empty />;
-  return <div className="overflow-x-auto rounded-lg border"><table className="w-full min-w-[640px] text-left text-sm"><thead className="bg-muted/60 text-xs uppercase text-muted-foreground"><tr>{headers.map(h => <th key={h} className="px-3 py-3 font-semibold">{h}</th>)}</tr></thead><tbody className="divide-y">{rows.map((row, i) => <tr key={i} className="hover:bg-muted/30">{row.map((cell, j) => <td key={j} className="px-3 py-3 align-middle">{cell}</td>)}</tr>)}</tbody></table></div>;
+  const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
+  const currentPage = Math.min(page, pageCount - 1);
+  const visibleRows = rows.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
+  return <div className="space-y-3">
+    <div className="hidden overflow-x-auto rounded-lg border sm:block">
+      <table className="w-full min-w-[640px] text-left text-sm">
+        <thead className="bg-muted/60 text-xs uppercase text-muted-foreground"><tr>{headers.map(h => <th key={h} className="px-3 py-3 font-semibold">{h}</th>)}</tr></thead>
+        <tbody className="divide-y">{visibleRows.map((row, i) => <tr key={currentPage * pageSize + i} className="hover:bg-muted/30">{row.map((cell, j) => <td key={j} className="px-3 py-3 align-middle">{cell}</td>)}</tr>)}</tbody>
+      </table>
+    </div>
+    <div className="grid gap-2 sm:hidden">
+      {visibleRows.map((row, i) => <article key={currentPage * pageSize + i} className="rounded-lg border bg-card p-3">
+        <dl className="grid gap-2">{row.map((cell, j) => <div key={j} className="grid grid-cols-[minmax(7rem,0.8fr)_minmax(0,1.2fr)] gap-3 border-b pb-2 last:border-0 last:pb-0"><dt className="text-xs font-medium text-muted-foreground">{headers[j]}</dt><dd className="min-w-0 break-words text-sm">{cell}</dd></div>)}</dl>
+      </article>)}
+    </div>
+    {rows.length > pageSize && <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+      <span>{currentPage * pageSize + 1}–{Math.min((currentPage + 1) * pageSize, rows.length)} de {rows.length} registros</span>
+      <div className="flex gap-2">
+        <button type="button" aria-label="Página anterior" disabled={currentPage === 0} onClick={() => setPage(Math.max(0, currentPage - 1))} className="rounded-md border px-3 py-2 disabled:opacity-40">Anterior</button>
+        <button type="button" aria-label="Próxima página" disabled={currentPage >= pageCount - 1} onClick={() => setPage(Math.min(pageCount - 1, currentPage + 1))} className="rounded-md border px-3 py-2 disabled:opacity-40">Próxima</button>
+      </div>
+    </div>}
+  </div>;
 }
 const pretty = (v: unknown) => v == null || v === "" ? "—" : String(v);
 const dateLabel = (v: string | null | undefined) => v ? new Date(v).toLocaleDateString("pt-BR") : "—";
@@ -81,59 +105,60 @@ const downloadBlob = (blob: Blob, filename: string) => {
   a.href = url; a.download = filename; a.click(); URL.revokeObjectURL(url);
 };
 
-// ── Login screen (accepts any email + any password ≥ 6 chars) ──────────────────
+// Demo access is passwordless for three reserved, fictitious role accounts.
 function LoginScreen({ onLogin }: { onLogin: () => void }) {
-  const [email, setEmail] = useState("demo@armazen.app");
-  const [password, setPassword] = useState("demo123");
-  const [busy, setBusy] = useState(false);
+  const [busyRole, setBusyRole] = useState<DemoRole | null>(null);
   const [err, setErr] = useState("");
 
-  const handleSubmit = async (e: ReactFormEvent) => {
-    e.preventDefault();
-    setBusy(true); setErr("");
+  const profiles: { role: DemoRole; title: string; description: string; actions: string; Icon: typeof Warehouse }[] = [
+    { role: "consulta", title: "Consulta", description: "Visualize indicadores, materiais, saldos, endereços, movimentações e tarefas.", actions: "Acesso somente para leitura", Icon: Search },
+    { role: "operacao", title: "Operação", description: "Consulte o estoque, registre movimentações e contagens e atualize tarefas.", actions: "Rotinas operacionais", Icon: ClipboardCheck },
+    { role: "gestao", title: "Gestão", description: "Administre armazéns, materiais, equipe, configurações e exportações.", actions: "Acesso administrativo", Icon: ShieldCheck },
+  ];
+
+  const handleDemoLogin = async (role: DemoRole) => {
+    setBusyRole(role);
+    setErr("");
     try {
-      // 1. Use server function to create/update user via admin API (bypasses email confirmation)
-      await ensureUserExists({ data: { email, password } });
-
-      // 2. Sign in — guaranteed to work since user was just created/updated above
-      const { error: signInErr } = await supabase.auth.signInWithPassword({ email, password });
-      if (signInErr) throw signInErr;
-
+      const result = await startDemoSession({ data: { role } });
+      const { error } = await supabase.auth.verifyOtp({
+        token_hash: result.tokenHash,
+        type: "magiclink",
+      });
+      if (error) throw error;
       onLogin();
     } catch (e) {
       setErr(errorMessage(e));
     } finally {
-      setBusy(false);
+      setBusyRole(null);
     }
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4">
-      <div className="w-full max-w-sm">
+    <div className="flex min-h-screen items-center justify-center bg-background px-4 py-10">
+      <div className="w-full max-w-5xl">
         <div className="mb-8 text-center">
-          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary text-primary-foreground">
+          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-sm">
             <Warehouse className="h-8 w-8" />
           </div>
-          <h1 className="text-2xl font-bold">armaZen</h1>
-          <p className="mt-1 text-sm text-muted-foreground">Sistema de Gestão de Armazém</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">Ambiente de demonstração</p>
+          <h1 className="mt-2 text-3xl font-bold tracking-tight">armaZen</h1>
+          <p className="mx-auto mt-2 max-w-xl text-sm text-muted-foreground">Explore o sistema com três perfis prontos. Cada acesso usa uma conta própria e permissões correspondentes à rotina demonstrada.</p>
         </div>
-        <form onSubmit={handleSubmit} className="space-y-4 rounded-xl border bg-card p-6 shadow-sm">
-          <h2 className="font-semibold">Entrar no sistema</h2>
-          <p className="text-xs text-muted-foreground">Use qualquer e-mail e senha (mín. 6 caracteres). Se a conta não existir, será criada automaticamente.</p>
-          <Field label="E-mail" value={email} onChange={setEmail} type="email" required />
-          <Field label="Senha" value={password} onChange={setPassword} type="password" required placeholder="mínimo 6 caracteres" />
-          {err && (
-            <div className="rounded-lg bg-destructive/10 p-3 text-xs text-destructive whitespace-pre-wrap">{err}</div>
-          )}
-          <button
-            type="submit"
-            disabled={busy}
-            className="flex h-10 w-full items-center justify-center rounded-lg bg-primary text-sm font-semibold text-primary-foreground disabled:opacity-50"
-          >
-            {busy ? "Entrando…" : "Entrar"}
-          </button>
-        </form>
-        <p className="mt-4 text-center text-xs text-muted-foreground">Protótipo acadêmico · armaZen</p>
+        {err && <div role="alert" className="mx-auto mb-5 max-w-3xl rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">{err}</div>}
+        <div className="grid gap-4 md:grid-cols-3">
+          {profiles.map(({ role, title, description, actions, Icon }) => <article key={role} className="flex flex-col rounded-2xl border bg-card p-5 shadow-sm transition-shadow hover:shadow-md">
+            <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-xl bg-primary/10 text-primary"><Icon className="h-5 w-5" /></div>
+            <h2 className="text-lg font-semibold">Acessar como {title}</h2>
+            <p className="mt-2 flex-1 text-sm leading-6 text-muted-foreground">{description}</p>
+            <p className="mb-4 mt-4 rounded-md bg-muted px-3 py-2 text-xs font-medium">{actions}</p>
+            <button type="button" disabled={busyRole !== null} onClick={() => void handleDemoLogin(role)} className="flex h-11 items-center justify-center gap-2 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-wait disabled:opacity-60">
+              {busyRole === role ? "Preparando acesso…" : `Entrar como ${title}`}
+            </button>
+          </article>)}
+        </div>
+        <p className="mt-6 text-center text-xs text-muted-foreground">As contas utilizam dados fictícios compartilhados entre os perfis. Não insira informações reais neste ambiente.</p>
+        <p className="mt-2 text-center text-xs text-muted-foreground">Protótipo acadêmico · armaZen</p>
       </div>
     </div>
   );
