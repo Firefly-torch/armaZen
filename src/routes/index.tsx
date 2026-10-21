@@ -293,23 +293,125 @@ function Index() {
 
   useEffect(() => { setSelectedFields(datasets[exportForm.dataset]?.fields ?? []); setPreview([]); }, [exportForm.dataset]);
 
-  // Derived totals — useMemo must be before conditional returns
+  useEffect(() => {
+    if (!inventorySessions.some((session) => session.id === selectedInventoryId)) {
+      setSelectedInventoryId(inventorySessions[0]?.id ?? "");
+    }
+  }, [inventorySessions, selectedInventoryId]);
+
+  // Warehouse-scoped, unit-aware indicators; never add kg, L and units together.
   const totals = useMemo(() => {
+    const scopedLocations = locations.filter((location) =>
+      dashboardWarehouseId === "todos" || location.warehouse_id === dashboardWarehouseId
+    );
+    const scopedLocationIds = new Set(scopedLocations.map((location) => location.id));
+    const scopedBalances = balances.filter((balance) =>
+      dashboardWarehouseId === "todos" || scopedLocationIds.has(balance.location_id)
+    );
     const balanceByMaterial = new Map<string, number>();
-    balances.forEach(b => balanceByMaterial.set(b.material_id, (balanceByMaterial.get(b.material_id) ?? 0) + Number(b.quantity || 0)));
+    const quantityByUnit = new Map<string, number>();
+    scopedBalances.forEach((balance) => {
+      const quantity = Number(balance.quantity || 0);
+      balanceByMaterial.set(balance.material_id, (balanceByMaterial.get(balance.material_id) ?? 0) + quantity);
+      const unit = materials.find((material) => material.id === balance.material_id)?.unit || "un";
+      quantityByUnit.set(unit, (quantityByUnit.get(unit) ?? 0) + quantity);
+    });
     const since = Date.now() - Number(period) * 86400000;
-    const open = tasks.filter(t => t.status !== "concluida");
+    const scopedMovements = movements.filter((movement) =>
+      (dashboardWarehouseId === "todos" ||
+        scopedLocationIds.has(movement.from_location_id) ||
+        scopedLocationIds.has(movement.to_location_id)) &&
+      new Date(movement.created_at).getTime() >= since
+    );
+    const scopedTasks = tasks.filter((task) =>
+      dashboardWarehouseId === "todos" ||
+      (task.location_id != null && scopedLocationIds.has(task.location_id))
+    );
+    const open = scopedTasks.filter((task) => task.status !== "concluida");
+    const storageLocations = scopedLocations.filter((location) =>
+      location.active && levels.some((level) => level.id === location.level_id && level.is_storage)
+    );
+    const occupiedLocations = storageLocations.filter((location) =>
+      scopedBalances.some((balance) => balance.location_id === location.id && Number(balance.quantity) > 0)
+    ).length;
+    const unitSummary = [...quantityByUnit.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([unit, quantity]) => `${new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 2 }).format(quantity)} ${unit}`)
+      .join(" · ");
+    const movementDays = Array.from({ length: 7 }, (_, index) => {
+      const date = new Date();
+      date.setHours(0, 0, 0, 0);
+      date.setDate(date.getDate() - (6 - index));
+      const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+      return {
+        label: date.toLocaleDateString("pt-BR", { weekday: "short" }),
+        count: movements.filter((movement) => {
+          if (dashboardWarehouseId !== "todos" &&
+              !scopedLocationIds.has(movement.from_location_id) &&
+              !scopedLocationIds.has(movement.to_location_id)) return false;
+          const created = new Date(movement.created_at);
+          const movementKey = `${created.getFullYear()}-${String(created.getMonth() + 1).padStart(2, "0")}-${String(created.getDate()).padStart(2, "0")}`;
+          return movementKey === key;
+        }).length,
+      };
+    });
     return {
-      materials: materials.filter(m => m.status === "ativo" || m.status === "active").length,
-      locations: locations.filter(l => l.active).length,
-      units: balances.reduce((sum, b) => sum + Number(b.quantity || 0), 0),
-      lowStock: materials.filter(m => (m.status === "ativo" || m.status === "active") && (balanceByMaterial.get(m.id) ?? 0) < Number(m.min_stock || 0)).length,
-      movements: movements.filter(m => new Date(m.created_at).getTime() >= since).length,
+      materials: materials.filter((material) => material.status === "ativo" || material.status === "active").length,
+      locations: scopedLocations.filter((location) => location.active).length,
+      units: unitSummary || "0",
+      lowStock: materials.filter((material) =>
+        (material.status === "ativo" || material.status === "active") &&
+        (balanceByMaterial.get(material.id) ?? 0) < Number(material.min_stock || 0)
+      ).length,
+      movements: scopedMovements.length,
       pending: open.length,
-      overdue: open.filter(t => t.due_at && new Date(t.due_at).getTime() < Date.now()).length,
-      divergences: counts.filter(c => Number(c.difference) !== 0).length,
+      overdue: open.filter((task) => task.due_at && new Date(task.due_at).getTime() < Date.now()).length,
+      divergences: counts.filter((item) =>
+        Number(item.difference) !== 0 &&
+        (dashboardWarehouseId === "todos" || scopedLocationIds.has(item.location_id))
+      ).length,
+      occupancy: storageLocations.length ? Math.round((occupiedLocations / storageLocations.length) * 100) : null,
+      occupiedLocations,
+      storageLocations: storageLocations.length,
+      movementDays,
     };
-  }, [materials, locations, balances, movements, tasks, counts, period]);
+  }, [materials, locations, levels, balances, movements, tasks, counts, period, dashboardWarehouseId]);
+
+  const selectedMapWarehouseId = mapWarehouseId && warehouses.some((warehouse) => warehouse.id === mapWarehouseId && warehouse.active)
+    ? mapWarehouseId
+    : warehouses.find((warehouse) => warehouse.active)?.id ?? "";
+  const mapChildren = locations
+    .filter((location) =>
+      location.active &&
+      location.warehouse_id === selectedMapWarehouseId &&
+      (location.parent_id ?? "") === mapParentId
+    )
+    .sort((a, b) => Number(a.pos_y ?? 0) - Number(b.pos_y ?? 0) || Number(a.pos_x ?? 0) - Number(b.pos_x ?? 0));
+  const selectedMapLocation = locations.find((location) => location.id === mapSelectedLocationId);
+  const mapDetailBalances = selectedMapLocation
+    ? balances.filter((balance) => balance.location_id === selectedMapLocation.id && Number(balance.quantity) > 0)
+    : [];
+  const mapDetailUnits = [...new Set(mapDetailBalances.map((balance) =>
+    materials.find((material) => material.id === balance.material_id)?.unit || "un"
+  ))];
+  const mapCapacityUnit = String(selectedMapLocation?.capacity_unit ?? "").trim().toLowerCase();
+  const mapCapacityCompatible = Boolean(
+    selectedMapLocation?.capacity &&
+    mapDetailUnits.length === 1 &&
+    mapDetailUnits[0].toLowerCase() === mapCapacityUnit
+  );
+  const mapComparableQuantity = mapCapacityCompatible
+    ? mapDetailBalances.reduce((sum, balance) => sum + Number(balance.quantity || 0), 0)
+    : 0;
+  const mapBreadcrumb = useMemo(() => {
+    const path: AnyRow[] = [];
+    let current = locations.find((location) => location.id === mapParentId);
+    while (current && current.warehouse_id === selectedMapWarehouseId) {
+      path.unshift(current);
+      current = current.parent_id ? locations.find((location) => location.id === current?.parent_id) : undefined;
+    }
+    return path;
+  }, [mapParentId, selectedMapWarehouseId, locations]);
 
   // Show loading splash while checking session
   if (user === undefined) {
