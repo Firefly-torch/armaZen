@@ -61,6 +61,8 @@ declare
   iid uuid;
   v_count uuid := _count;
   v_count_status text;
+  v_count_warehouse uuid;
+  v_location_warehouse uuid;
 begin
   if _counted is null or _counted < 0 then
     raise exception 'A quantidade contada não pode ser negativa.';
@@ -72,13 +74,16 @@ begin
   select * into m from public.materials where id = _material and org_id = _org;
   if m.id is null then raise exception 'Material inexistente.'; end if;
   perform public._check_location(_org, _location, false);
+  select warehouse_id into v_location_warehouse
+    from public.locations
+    where id = _location and org_id = _org;
 
   if v_count is null then
     insert into public.inventory_counts(org_id, description, created_by, created_at)
     values (_org, 'Contagem avulsa', _user, _at)
     returning id into v_count;
   else
-    select status into v_count_status
+    select status, warehouse_id into v_count_status, v_count_warehouse
       from public.inventory_counts
       where id = v_count and org_id = _org
       for update;
@@ -86,6 +91,9 @@ begin
     if not found then raise exception 'Inventário inexistente.'; end if;
     if v_count_status <> 'em_andamento' then
       raise exception 'Este inventário já foi concluído e não aceita novas contagens.';
+    end if;
+    if v_count_warehouse is not null and v_count_warehouse <> v_location_warehouse then
+      raise exception 'O endereço selecionado não pertence ao armazém deste inventário.';
     end if;
   end if;
 
