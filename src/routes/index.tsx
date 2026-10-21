@@ -403,10 +403,9 @@ function Index() {
   const mapCapacityUnit = String(selectedMapLocation?.capacity_unit ?? "").trim().toLowerCase();
   const mapCapacityCompatible = Boolean(
     selectedMapLocation?.capacity &&
-    mapDetailUnits.length === 1 &&
-    mapDetailUnits[0].toLowerCase() === mapCapacityUnit
+    (mapDetailUnits.length === 0 || (mapDetailUnits.length === 1 && mapDetailUnits[0].toLowerCase() === mapCapacityUnit))
   );
-  const mapComparableQuantity = mapCapacityCompatible
+  const mapComparableQuantity = mapCapacityCompatible && mapDetailUnits.length > 0
     ? mapDetailBalances.reduce((sum, balance) => sum + Number(balance.quantity || 0), 0)
     : 0;
   const mapBreadcrumb = useMemo(() => {
@@ -668,10 +667,11 @@ function Index() {
   </div>;
 }
 
-function AdjustmentForm({ orgId, materials, locations, saving, onSave, onDone }: {
+function AdjustmentForm({ orgId, materials, locations, saving, onSave, onDone, countId, warehouseId }: {
   orgId: string; materials: AnyRow[]; locations: AnyRow[]; saving: boolean;
   onSave: (fn:()=>Promise<unknown>, success:string)=>Promise<void>; onDone:()=>void;
+  countId?: string; warehouseId?: string | null;
 }) {
   const [form,setForm]=useState({material_id:"",location_id:"",lot:"",counted:"0",reason:""});
-  return <form className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3" onSubmit={e=>{e.preventDefault();void onSave(async()=>{if(!form.material_id||!form.location_id)throw new Error("Selecione material e endereço.");if(!form.reason.trim())throw new Error("Informe o motivo do ajuste.");const counted=Number(form.counted);if(!Number.isFinite(counted)||counted<0)throw new Error("A contagem precisa ser zero ou maior.");const {error}=await db.rpc("register_adjustment",{_material:form.material_id,_location:form.location_id,_lot:form.lot||"",_counted:counted,_reason:form.reason.trim(),_org:orgId});if(error)throw error;setForm({material_id:"",location_id:"",lot:"",counted:"0",reason:""});onDone();},"Ajuste de inventário registrado.");}}><SelectField label="Material" value={form.material_id} onChange={v=>setForm({...form,material_id:v})} required options={materials.filter(m=>m.status==="ativo"||m.status==="active").map(m=>({value:m.id,label:`${m.code} — ${m.description}`}))}/><SelectField label="Endereço" value={form.location_id} onChange={v=>setForm({...form,location_id:v})} required options={locations.filter(l=>l.active&&l.status!=="bloqueado").map(l=>({value:l.id,label:`${l.code} — ${l.name}`}))}/><Field label="Lote" value={form.lot} onChange={v=>setForm({...form,lot:v})}/><Field label="Quantidade contada" type="number" min={0} step={0.01} value={form.counted} onChange={v=>setForm({...form,counted:v})} required/><Field label="Motivo obrigatório" value={form.reason} onChange={v=>setForm({...form,reason:v})} required/><div className="flex items-end"><button disabled={saving} className="h-10 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground">Registrar ajuste</button></div></form>;
+  return <form className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3" onSubmit={e=>{e.preventDefault();void onSave(async()=>{if(!form.material_id||!form.location_id)throw new Error("Selecione material e endereço.");if(!form.reason.trim())throw new Error("Informe o motivo do ajuste.");const counted=Number(form.counted);if(!Number.isFinite(counted)||counted<0)throw new Error("A contagem precisa ser zero ou maior.");const {error}=await db.rpc("register_adjustment",{_material:form.material_id,_location:form.location_id,_lot:form.lot||"",_counted:counted,_reason:form.reason.trim(),_org:orgId,_count:countId||null});if(error)throw error;setForm({material_id:"",location_id:"",lot:"",counted:"0",reason:""});onDone();},"Ajuste de inventário registrado.");}}><SelectField label="Material" value={form.material_id} onChange={v=>setForm({...form,material_id:v})} required options={materials.filter(m=>m.status==="ativo"||m.status==="active").map(m=>({value:m.id,label:`${m.code} — ${m.description}`}))}/><SelectField label="Endereço" value={form.location_id} onChange={v=>setForm({...form,location_id:v})} required options={locations.filter(l=>l.active&&l.status!=="bloqueado"&&(!warehouseId||l.warehouse_id===warehouseId)).map(l=>({value:l.id,label:`${l.code} — ${l.name}`}))}/><Field label="Lote" value={form.lot} onChange={v=>setForm({...form,lot:v})}/><Field label="Quantidade contada" type="number" min={0} step={0.01} value={form.counted} onChange={v=>setForm({...form,counted:v})} required/><Field label="Motivo obrigatório" value={form.reason} onChange={v=>setForm({...form,reason:v})} required/><div className="flex items-end"><button disabled={saving} className="h-10 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground">Registrar ajuste</button></div></form>;
 }
