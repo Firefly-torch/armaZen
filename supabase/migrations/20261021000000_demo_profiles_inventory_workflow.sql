@@ -28,7 +28,7 @@ create policy "operacao update inventory counts"
   using (public.has_org_role(org_id, 'operacao'))
   with check (
     public.has_org_role(org_id, 'operacao')
-    and created_by = auth.uid()
+    and (created_by = auth.uid() or public.has_org_role(org_id, 'gestao'))
   );
 
 -- Serialize inventory counting per count session and prevent duplicate scans
