@@ -317,10 +317,12 @@ function Index() {
       quantityByUnit.set(unit, (quantityByUnit.get(unit) ?? 0) + quantity);
     });
     const since = Date.now() - Number(period) * 86400000;
-    const scopedMovements = movements.filter((movement) =>
-      (dashboardWarehouseId === "todos" ||
-        scopedLocationIds.has(movement.from_location_id) ||
-        scopedLocationIds.has(movement.to_location_id)) &&
+    const scopedMovementsAll = movements.filter((movement) =>
+      dashboardWarehouseId === "todos" ||
+      scopedLocationIds.has(movement.from_location_id) ||
+      scopedLocationIds.has(movement.to_location_id)
+    );
+    const scopedMovements = scopedMovementsAll.filter((movement) =>
       new Date(movement.created_at).getTime() >= since
     );
     const scopedTasks = tasks.filter((task) =>
@@ -364,6 +366,10 @@ function Index() {
         (balanceByMaterial.get(material.id) ?? 0) < Number(material.min_stock || 0)
       ).length,
       movements: scopedMovements.length,
+      movementTypeCounts: ["entrada", "saida", "transferencia", "ajuste", "estorno"].map((type) => ({
+        type,
+        count: scopedMovementsAll.filter((movement) => movement.type === type).length,
+      })),
       pending: open.length,
       overdue: open.filter((task) => task.due_at && new Date(task.due_at).getTime() < Date.now()).length,
       divergences: counts.filter((item) =>
