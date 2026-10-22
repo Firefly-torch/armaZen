@@ -2,6 +2,7 @@
 // emails or passwords, and this endpoint can only issue sessions for the three
 // reserved, fictitious demonstration profiles.
 import { createServerFn } from "@tanstack/react-start";
+import type { User } from "@supabase/supabase-js";
 import { createSupabaseAdminClient } from "./client.server";
 
 export type DemoRole = "consulta" | "operacao" | "gestao";
@@ -69,7 +70,9 @@ async function findUserByEmail(
     });
     if (error) {
       logAuthFailure("listUsers", role, email, error);
-      throw new Error("Não foi possível verificar a conta de demonstração. Consulte os logs do servidor.");
+      throw new Error(
+        "Não foi possível verificar a conta de demonstração. Consulte os logs do servidor.",
+      );
     }
     const user = data.users.find((item) => item.email?.toLowerCase() === email.toLowerCase());
     if (user) return user;
@@ -81,7 +84,7 @@ async function findUserByEmail(
 async function prepareExistingDemoUser(
   supabaseAdmin: Awaited<ReturnType<typeof createSupabaseAdminClient>>,
   role: DemoRole,
-  existing: Awaited<ReturnType<typeof findUserByEmail>> & {},
+  existing: User,
 ) {
   const profile = DEMO_PROFILES[role];
   const existingRole = existing.app_metadata?.armaZenDemoRole;
@@ -111,7 +114,12 @@ async function prepareExistingDemoUser(
   });
 
   if (error || !data.user) {
-    logAuthFailure("updateUserById", role, profile.email, error ?? new Error("Supabase returned no user"));
+    logAuthFailure(
+      "updateUserById",
+      role,
+      profile.email,
+      error ?? new Error("Supabase returned no user"),
+    );
     throw new Error(
       "Não foi possível regularizar a conta reservada para demonstração. Consulte os logs do servidor.",
     );
@@ -144,8 +152,15 @@ async function ensureDemoUser(
     );
 
   if (!isDuplicate) {
-    logAuthFailure("createUser", role, profile.email, error ?? new Error("Supabase returned no user"));
-    throw new Error("Não foi possível preparar a conta de demonstração no Supabase Auth. Consulte os logs do servidor.");
+    logAuthFailure(
+      "createUser",
+      role,
+      profile.email,
+      error ?? new Error("Supabase returned no user"),
+    );
+    throw new Error(
+      "Não foi possível preparar a conta de demonstração no Supabase Auth. Consulte os logs do servidor.",
+    );
   }
 
   const existing = await findUserByEmail(supabaseAdmin, profile.email, role);
@@ -206,7 +221,9 @@ export const startDemoSession = createServerFn({ method: "POST" })
         email,
         linkError ?? new Error("Supabase did not return a hashed token"),
       );
-      throw new Error("Não foi possível iniciar a sessão demonstrativa. Consulte os logs do servidor.");
+      throw new Error(
+        "Não foi possível iniciar a sessão demonstrativa. Consulte os logs do servidor.",
+      );
     }
 
     // A one-time token is returned only for one of the three public demo profiles.
