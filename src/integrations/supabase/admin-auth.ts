@@ -17,6 +17,13 @@ function isDemoRole(value: unknown): value is DemoRole {
   return value === "consulta" || value === "operacao" || value === "gestao";
 }
 
+// Two UUIDs without separators provide 64 random characters, within Supabase's
+// 72-character password limit. These passwords remain unknown to demo visitors;
+// public demo access is provided through one-time magic links.
+function generateDemoPassword(): string {
+  return `${crypto.randomUUID().replaceAll("-", "")}${crypto.randomUUID().replaceAll("-", "")}`;
+}
+
 /**
  * Log only the diagnostic fields needed to debug Supabase Auth. Never log
  * request headers, API keys, passwords, access tokens, or generated links.
@@ -110,7 +117,7 @@ async function prepareExistingDemoUser(
       full_name: profile.name,
     },
     email_confirm: true,
-    password: `${crypto.randomUUID()}-${crypto.randomUUID()}`,
+    password: generateDemoPassword(),
   });
 
   if (error || !data.user) {
@@ -135,7 +142,7 @@ async function ensureDemoUser(
   const profile = DEMO_PROFILES[role];
   const { data, error } = await supabaseAdmin.auth.admin.createUser({
     email: profile.email,
-    password: `${crypto.randomUUID()}-${crypto.randomUUID()}`,
+    password: generateDemoPassword(),
     email_confirm: true,
     app_metadata: { armaZenDemoRole: role },
     user_metadata: { full_name: profile.name },
