@@ -998,7 +998,7 @@ export function WarehouseMap({
 
       {editMode && (
         <div className="mt-3 rounded-lg border border-primary/30 bg-primary/5 p-3 text-xs text-muted-foreground">
-          Arraste um endereço para uma das áreas de inserção ao final do respectivo grupo. A posição será salva nos campos visuais já existentes do endereço; os vínculos de estoque e movimentações não serão alterados. A grade usa duas colunas em telas maiores e uma coluna em telas estreitas.
+          Arraste a alça de um endereço para outro do mesmo grupo para trocar as posições; também é possível soltar nas áreas ao final do grupo. Durante o arraste com mouse, use a roda para rolar a página sem soltar o botão. A posição é salva nos campos visuais do endereço; os vínculos de estoque e movimentações não são alterados.
         </div>
       )}
       {mapError && (
