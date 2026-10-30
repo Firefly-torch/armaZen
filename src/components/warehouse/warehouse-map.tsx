@@ -673,7 +673,7 @@ export function WarehouseMap({
     : null;
 
   return (
-    <section className="rounded-xl border bg-card p-4 shadow-sm sm:p-5">
+    <section className="min-w-0 w-full max-w-full rounded-xl border bg-card p-3 shadow-sm sm:p-5">
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="font-semibold">Mapa geral do armazém</h2>
@@ -855,7 +855,7 @@ export function WarehouseMap({
           Não existem endereços ativos cadastrados neste armazém.
         </div>
       ) : (
-        <div className="mt-4 min-w-0 max-w-full max-h-[72vh] overflow-y-auto overflow-x-hidden rounded-xl border bg-muted/10 p-2 sm:p-4>
+        <div className="mt-4 min-w-0 max-w-full max-h-[72vh] overflow-y-auto overflow-x-hidden rounded-xl border bg-muted/10 p-2 sm:p-4">
           <div
             className="min-w-0 w-full origin-top-left"
             style={{ zoom: zoom / 100 }}
@@ -872,7 +872,7 @@ export function WarehouseMap({
       )}
 
       {selectedLocation && (
-        <div className="mt-5 min-w-0 w-full max-w-full overflow-hidden rounded-xl border bg-card p-3 sm:p-4>
+        <div className="mt-5 min-w-0 w-full max-w-full overflow-hidden rounded-xl border bg-card p-3 sm:p-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="min-w-0">
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
