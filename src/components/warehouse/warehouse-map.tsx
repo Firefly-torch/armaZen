@@ -720,7 +720,12 @@ export function WarehouseMap({
                   <p className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">Capacidade</p>
                   <p className="text-xs font-semibold tabular-nums">{capacityPercent === null ? "Não calculada" : capacityPercent + "%"}</p>
                 </div>
-                <p className="text-[10px] text-muted-foreground">{formatQuantity(capacityQuantity)} {unitTotals.size === 1 ? [...unitTotals.keys()][0] : ""} / {formatQuantity(Number(location.capacity))} {location.capacity_unit ?? ""}</p>
+                <p className="text-[10px] text-muted-foreground">
+                  {unitTotals.size > 1
+                    ? "Unidades incompatíveis para calcular o volume"
+                    : formatQuantity(capacityQuantity) + " " + (unitTotals.size === 1 ? [...unitTotals.keys()][0] : location.capacity_unit ?? "")}
+                  {" / "}{formatQuantity(Number(location.capacity))} {location.capacity_unit ?? ""}
+                </p>
                 {capacityPercent !== null && <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-primary" style={{ width: capacityPercent + "%" }} /></div>}
               </div>
             )}
@@ -799,6 +804,7 @@ export function WarehouseMap({
                 }}
                 onDrop={(event) => {
                   event.preventDefault();
+                  event.stopPropagation();
                   if (saving) return;
                   const locationId = event.dataTransfer.getData("text/plain") || draggedId;
                   setDraggedId(null);
