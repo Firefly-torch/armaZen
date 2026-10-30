@@ -6,6 +6,7 @@ import {
   Activity, AlertTriangle, ArrowLeftRight, Boxes, CheckCircle2, ClipboardCheck,
   ClipboardList, Download, LayoutDashboard, MapPinned, Package, Plus, RefreshCw,
   ShieldCheck, Warehouse, Pencil, Search, Ban, Check, Users, GripVertical, MapPin, CalendarClock,
+  ChevronDown, ChevronRight,
 } from "lucide-react";
 import { WarehouseMap } from "@/components/warehouse/warehouse-map";
 import { supabase } from "@/integrations/supabase/client";
@@ -84,21 +85,17 @@ function Panel({ title, description, children, action }: { title: string; descri
 function Empty({ children = "Nenhum registro encontrado." }: { children?: ReactNode }) {
   return <p className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">{children}</p>;
 }
-function Table({ headers, rows, pageSize = 10 }: { headers: string[]; rows: ReactNode[][]; pageSize?: number }) {
-  const [page, setPage] = useState(0);
+function Table({ headers, rows }: { headers: string[]; rows: ReactNode[][] }) {
   if (!rows.length) return <Empty />;
-  const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
-  const currentPage = Math.min(page, pageCount - 1);
-  const visibleRows = rows.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
   return <div className="min-w-0 w-full max-w-full space-y-3">
     <div className="hidden min-w-0 max-w-full overflow-x-auto rounded-lg border sm:block">
       <table className="w-full min-w-[640px] text-left text-sm">
         <thead className="bg-muted/60 text-xs uppercase text-muted-foreground"><tr>{headers.map(h => <th key={h} className="px-3 py-3 font-semibold">{h}</th>)}</tr></thead>
-        <tbody className="divide-y divide-slate-200 dark:divide-slate-700">{visibleRows.map((row, i) => <tr key={currentPage * pageSize + i} className="odd:bg-white even:bg-slate-50/80 hover:bg-primary/5 dark:odd:bg-slate-950/30 dark:even:bg-slate-900/40">{row.map((cell, j) => <td key={j} className="max-w-[22rem] px-3 py-3 align-middle"><div className="min-w-0 break-words [overflow-wrap:anywhere]">{cell}</div></td>)}</tr>)}</tbody>
+        <tbody className="divide-y divide-slate-200 dark:divide-slate-700">{rows.map((row, i) => <tr key={i} className="odd:bg-white even:bg-slate-50/80 hover:bg-primary/5 dark:odd:bg-slate-950/30 dark:even:bg-slate-900/40">{row.map((cell, j) => <td key={j} className="max-w-[22rem] px-3 py-3 align-middle"><div className="min-w-0 break-words [overflow-wrap:anywhere]">{cell}</div></td>)}</tr>)}</tbody>
       </table>
     </div>
     <div className="grid min-w-0 gap-3 sm:hidden">
-      {visibleRows.map((row, i) => <article key={currentPage * pageSize + i} className="min-w-0 overflow-hidden rounded-xl border-2 border-slate-300 border-l-4 border-l-primary bg-card p-3 shadow-md ring-1 ring-slate-200/70 dark:border-slate-600 dark:ring-slate-800">
+      {rows.map((row, i) => <article key={i} className="min-w-0 overflow-hidden rounded-xl border-2 border-slate-300 border-l-4 border-l-primary bg-card p-3 shadow-md ring-1 ring-slate-200/70 dark:border-slate-600 dark:ring-slate-800">
         <dl className="grid min-w-0 gap-2.5">
           {row[0] !== undefined && <div className="min-w-0 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2.5">
             <dt className="text-[10px] font-bold uppercase tracking-wider text-primary">{headers[0]}</dt>
@@ -111,13 +108,7 @@ function Table({ headers, rows, pageSize = 10 }: { headers: string[]; rows: Reac
         </dl>
       </article>)}
     </div>
-    {rows.length > pageSize && <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-      <span>{currentPage * pageSize + 1}–{Math.min((currentPage + 1) * pageSize, rows.length)} de {rows.length} registros</span>
-      <div className="flex gap-2">
-        <button type="button" aria-label="Página anterior" disabled={currentPage === 0} onClick={() => setPage(Math.max(0, currentPage - 1))} className="rounded-md border px-3 py-2 disabled:opacity-40">Anterior</button>
-        <button type="button" aria-label="Próxima página" disabled={currentPage >= pageCount - 1} onClick={() => setPage(Math.min(pageCount - 1, currentPage + 1))} className="rounded-md border px-3 py-2 disabled:opacity-40">Próxima</button>
-      </div>
-    </div>}
+    <p className="text-right text-xs text-muted-foreground">{rows.length} registro(s) exibido(s)</p>
   </div>;
 }
 const pretty = (v: unknown) => v == null || v === "" ? "—" : String(v);
@@ -257,6 +248,7 @@ function Index() {
   const [message, setMessage] = useState("");
   const [dataError, setDataError] = useState("");
   const [search, setSearch] = useState("");
+  const [collapsedAddressRows, setCollapsedAddressRows] = useState<Set<string>>(() => new Set());
   const [reload, setReload] = useState(0);
   const [period, setPeriod] = useState("30");
   const [dashboardWarehouseId, setDashboardWarehouseId] = useState("todos");
@@ -566,6 +558,95 @@ function Index() {
     </div>
   </div>;
 
+  const addressSearch = search.trim().toLocaleLowerCase("pt-BR");
+  const addressById = new Map<string, AnyRow>(locations.map(location => [location.id, location] as const));
+  const addressChildrenByParent = new Map<string | null, AnyRow[]>();
+  for (const location of locations) {
+    const siblings = addressChildrenByParent.get(location.parent_id ?? null) ?? [];
+    siblings.push(location);
+    addressChildrenByParent.set(location.parent_id ?? null, siblings);
+  }
+  const addressSort = (a: AnyRow, b: AnyRow) => {
+    const warehouseA = warehouses.find(warehouse => warehouse.id === a.warehouse_id)?.name ?? "";
+    const warehouseB = warehouses.find(warehouse => warehouse.id === b.warehouse_id)?.name ?? "";
+    return warehouseA.localeCompare(warehouseB, "pt-BR", { numeric: true }) ||
+      Number(a.pos_y ?? 0) - Number(b.pos_y ?? 0) ||
+      Number(a.pos_x ?? 0) - Number(b.pos_x ?? 0) ||
+      String(a.code).localeCompare(String(b.code), "pt-BR", { numeric: true });
+  };
+  for (const siblings of addressChildrenByParent.values()) siblings.sort(addressSort);
+  const matchingAddressIds = new Set(locations.filter(location => {
+    const parentCode = addressById.get(location.parent_id)?.code;
+    const values = [
+      location.code, location.name, location.status,
+      levels.find(level => level.id === location.level_id)?.name,
+      warehouses.find(warehouse => warehouse.id === location.warehouse_id)?.name,
+      parentCode,
+    ];
+    return values.some(value => String(value ?? "").toLocaleLowerCase("pt-BR").includes(addressSearch));
+  }).map(location => location.id));
+  const addressAncestorIds = new Set<string>();
+  for (const id of matchingAddressIds) {
+    let parentId = addressById.get(id)?.parent_id ?? null;
+    let depth = 0;
+    while (parentId && depth < 20) {
+      addressAncestorIds.add(parentId);
+      parentId = addressById.get(parentId)?.parent_id ?? null;
+      depth += 1;
+    }
+  }
+  const expandableAddressIds = locations
+    .filter(location => (addressChildrenByParent.get(location.id)?.length ?? 0) > 0)
+    .map(location => location.id);
+  const addressRows: ReactNode[][] = [];
+  const appendAddressRows = (parentId: string | null, depth: number) => {
+    if (depth > 20) return;
+    for (const location of addressChildrenByParent.get(parentId) ?? []) {
+      if (addressSearch && !matchingAddressIds.has(location.id) && !addressAncestorIds.has(location.id)) continue;
+      const children = addressChildrenByParent.get(location.id) ?? [];
+      const hasChildren = children.length > 0;
+      const isCollapsed = collapsedAddressRows.has(location.id) && !addressSearch;
+      const quantity = balances
+        .filter(balance => balance.location_id === location.id)
+        .reduce((total, balance) => total + Number(balance.quantity || 0), 0);
+      const parentCode = addressById.get(location.parent_id)?.code;
+      addressRows.push([
+        <div className="flex min-w-0 items-center gap-1.5" style={{ paddingLeft: depth * 18 + "px" }}>
+          {hasChildren
+            ? <button type="button" className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border bg-background hover:bg-muted" aria-label={isCollapsed ? "Expandir " + location.code : "Recolher " + location.code} title={isCollapsed ? "Expandir subendereços" : "Recolher subendereços"} onClick={() => setCollapsedAddressRows(current => {
+                const next = new Set(current);
+                if (next.has(location.id)) next.delete(location.id);
+                else next.add(location.id);
+                return next;
+              })}>{isCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}</button>
+            : <span className="h-7 w-7 shrink-0" />}
+          <span className="font-semibold">{location.code}</span>
+          {hasChildren && <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">{children.length}</span>}
+        </div>,
+        <span className={depth > 0 ? "text-muted-foreground" : "font-medium"}>{location.name}</span>,
+        `${warehouses.find(warehouse => warehouse.id === location.warehouse_id)?.name ?? "—"} / ${levels.find(level => level.id === location.level_id)?.name ?? "—"}`,
+        pretty(parentCode),
+        statusPill(location.status),
+        quantity,
+        canManage ? <div className="flex flex-wrap gap-2">
+          <button type="button" title="Editar endereço" className="rounded border p-2" onClick={() => setLocForm({
+            id: location.id, warehouse_id: location.warehouse_id, level_id: location.level_id,
+            parent_id: location.parent_id ?? "", code: location.code, name: location.name,
+            status: location.status, capacity: location.capacity == null ? "" : String(location.capacity),
+            capacity_unit: location.capacity_unit ?? "un", notes: location.notes ?? "",
+          })}><Pencil className="h-4 w-4" /></button>
+          <button type="button" title="Desativar endereço" className="rounded border p-2" onClick={() => void runSave(async () => {
+            if (quantity > 0) throw new Error("Não é possível desativar um endereço com saldo. Transfira o estoque antes.");
+            const { error } = await db.from("locations").update({ active: false, updated_at: new Date().toISOString() }).eq("id", location.id).eq("org_id", orgId);
+            if (error) throw error;
+          }, "Endereço desativado.")}><Ban className="h-4 w-4" /></button>
+        </div> : "—",
+      ]);
+      if (hasChildren && !isCollapsed) appendAddressRows(location.id, depth + 1);
+    }
+  };
+  appendAddressRows(null, 0);
+
   const warehouseSection = <div className="space-y-5">
     <Panel title="Armazéns" description="Cadastre instalações genéricas. Desativar preserva vínculos e histórico.">
       {canManage && <form className="mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4" onSubmit={e=>{e.preventDefault(); void runSave(async()=>{const payload={code:whForm.code.trim(),name:whForm.name.trim(),description:whForm.description.trim()||null,org_id:orgId,active:whForm.id?(warehouses.find(w=>w.id===whForm.id)?.active??true):true,updated_at:new Date().toISOString()}; if(whForm.id) {const {error}=await db.from("warehouses").update(payload).eq("id",whForm.id).eq("org_id",orgId);if(error)throw error;} else {const {error}=await db.from("warehouses").insert(payload);if(error)throw error;} setWhForm({id:"",code:"",name:"",description:""});},"Armazém salvo.");}}> <Field label="Código" value={whForm.code} onChange={v=>setWhForm({...whForm,code:v})} required/><Field label="Nome" value={whForm.name} onChange={v=>setWhForm({...whForm,name:v})} required/><Field label="Descrição" value={whForm.description} onChange={v=>setWhForm({...whForm,description:v})}/><div className="flex items-end gap-2"><button disabled={saving} className="flex h-10 items-center gap-2 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground"><Plus className="h-4 w-4"/>{whForm.id?"Salvar edição":"Cadastrar"}</button>{whForm.id&&<button type="button" className="h-10 rounded-lg border px-3 text-sm" onClick={()=>setWhForm({id:"",code:"",name:"",description:""})}>Cancelar</button>}</div></form>}
@@ -577,8 +658,18 @@ function Index() {
     </Panel>
     <Panel title="Endereços" description="Estados: disponível, reservado ou bloqueado. A posição visual é esquemática, não uma planta real.">
       {canManage&&<form className="mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4" onSubmit={e=>{e.preventDefault();void runSave(async()=>{const p={org_id:orgId,warehouse_id:locForm.warehouse_id,level_id:locForm.level_id,parent_id:locForm.parent_id||null,code:locForm.code.trim(),name:locForm.name.trim(),status:locForm.status,capacity:locForm.capacity?Number(locForm.capacity):null,capacity_unit:locForm.capacity_unit||null,notes:locForm.notes||null,active:locForm.id?(locations.find(l=>l.id===locForm.id)?.active??true):true,updated_at:new Date().toISOString()};const q=locForm.id?db.from("locations").update(p).eq("id",locForm.id):db.from("locations").insert(p);const {error}=await q;if(error)throw error;setLocForm({id:"",warehouse_id:"",level_id:"",parent_id:"",code:"",name:"",status:"disponivel",capacity:"",capacity_unit:"un",notes:""});},"Endereço salvo.");}}><SelectField label="Armazém" value={locForm.warehouse_id} onChange={v=>setLocForm({...locForm,warehouse_id:v,level_id:"",parent_id:""})} required options={warehouses.filter(w=>w.active).map(w=>({value:w.id,label:w.name}))}/><SelectField label="Nível" value={locForm.level_id} onChange={v=>setLocForm({...locForm,level_id:v})} required options={levels.filter(l=>l.warehouse_id===locForm.warehouse_id).map(l=>({value:l.id,label:l.name}))}/><SelectField label="Endereço pai" value={locForm.parent_id} onChange={v=>setLocForm({...locForm,parent_id:v})} options={locations.filter(l=>l.warehouse_id===locForm.warehouse_id&&l.id!==locForm.id).map(l=>({value:l.id,label:`${l.code} — ${l.name}`}))}/><Field label="Código" value={locForm.code} onChange={v=>setLocForm({...locForm,code:v})} required/><Field label="Nome" value={locForm.name} onChange={v=>setLocForm({...locForm,name:v})} required/><SelectField label="Situação" value={locForm.status} onChange={v=>setLocForm({...locForm,status:v})} options={locationStatuses.map(v=>({value:v,label:v.replaceAll("_"," ")}))} required/><Field label="Capacidade" type="number" min={0} step={0.01} value={locForm.capacity} onChange={v=>setLocForm({...locForm,capacity:v})}/><Field label="Unidade da capacidade" value={locForm.capacity_unit} onChange={v=>setLocForm({...locForm,capacity_unit:v})}/><Field label="Observações" value={locForm.notes} onChange={v=>setLocForm({...locForm,notes:v})}/><div className="flex items-end gap-2"><button className="h-10 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground" disabled={saving}>Salvar endereço</button>{locForm.id&&<button type="button" className="h-10 rounded-lg border px-3 text-sm" onClick={()=>setLocForm({id:"",warehouse_id:"",level_id:"",parent_id:"",code:"",name:"",status:"disponivel",capacity:"",capacity_unit:"un",notes:""})}>Cancelar</button>}</div></form>}
-      <div className="mb-3 flex gap-2"><Search className="mt-2.5 h-4 w-4 text-muted-foreground"/><input className="h-10 w-full max-w-sm rounded-lg border bg-background px-3 text-sm" placeholder="Pesquisar código, nome ou nível" value={search} onChange={e=>setSearch(e.target.value)}/></div>
-      <Table headers={["Código","Nome","Armazém / nível","Pai","Situação","Saldo","Ações"]} rows={locations.filter(l=>[l.code,l.name,l.status,levels.find(level=>level.id===l.level_id)?.name,warehouses.find(w=>w.id===l.warehouse_id)?.name,locations.find(parent=>parent.id===l.parent_id)?.code].some(value=>String(value??"").toLowerCase().includes(search.toLowerCase()))).map(l=>{const qty=balances.filter(b=>b.location_id===l.id).reduce((s,b)=>s+Number(b.quantity||0),0);return [l.code,l.name,`${warehouses.find(w=>w.id===l.warehouse_id)?.name??"—"} / ${levels.find(x=>x.id===l.level_id)?.name??"—"}`,pretty(locations.find(x=>x.id===l.parent_id)?.code),statusPill(l.status),qty,canManage?<div className="flex gap-2"><button className="rounded border p-2" onClick={()=>setLocForm({id:l.id,warehouse_id:l.warehouse_id,level_id:l.level_id,parent_id:l.parent_id??"",code:l.code,name:l.name,status:l.status,capacity:l.capacity==null?"":String(l.capacity),capacity_unit:l.capacity_unit??"un",notes:l.notes??""})}><Pencil className="h-4 w-4"/></button><button className="rounded border p-2" title="Desativar endereço" onClick={()=>void runSave(async()=>{if(qty>0)throw new Error("Não é possível desativar um endereço com saldo. Transfira o estoque antes.");const {error}=await db.from("locations").update({active:false,updated_at:new Date().toISOString()}).eq("id",l.id).eq("org_id",orgId);if(error)throw error;},"Endereço desativado.")}><Ban className="h-4 w-4"/></button></div>:"—"]})}/>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <input className="h-10 w-full max-w-sm rounded-lg border bg-background px-3 text-sm" placeholder="Pesquisar código, nome ou nível" value={search} onChange={e => setSearch(e.target.value)} />
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" className="h-9 rounded-lg border px-3 text-xs" disabled={!expandableAddressIds.length} onClick={() => setCollapsedAddressRows(new Set())}>Expandir tudo</button>
+          <button type="button" className="h-9 rounded-lg border px-3 text-xs" disabled={!expandableAddressIds.length} onClick={() => setCollapsedAddressRows(new Set(expandableAddressIds))}>Recolher tudo</button>
+        </div>
+      </div>
+      {addressSearch && <p className="mb-2 text-xs text-muted-foreground">Os caminhos hierárquicos dos resultados da pesquisa são expandidos automaticamente.</p>}
+      <Table headers={["Código","Nome","Armazém / nível","Pai","Situação","Saldo","Ações"]} rows={addressRows} />
     </Panel>
     <WarehouseMap
       warehouses={warehouses}
