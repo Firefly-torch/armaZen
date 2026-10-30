@@ -8,12 +8,12 @@
 
 - Mapa geral que renderiza a hierarquia ativa inteira do armazém, em vez de apresentar somente os filhos do nível selecionado.
 - Organização recursiva por níveis, mantendo zonas, corredores, estantes e posições visíveis no mesmo contexto.
-- Controles de zoom, visão geral, expandir tudo e recolher tudo.
-- Pesquisa de endereço, nível ou material; os ancestrais permanecem visíveis para preservar o contexto da localização.
+- Controles de zoom, enquadramento, expandir tudo e recolher tudo.
+- Pesquisa por endereço, nível, código/descrição de material e código de barras cadastrado; os ancestrais permanecem visíveis para preservar o contexto da localização.
 - Filtros por posições com saldo, sem saldo, bloqueadas, reservadas e materiais abaixo do estoque mínimo.
 - Resumo de posições de armazenagem, ocupadas, bloqueadas, reservadas e localizações com materiais abaixo do mínimo.
-- Detalhes contextuais do endereço selecionado: caminho hierárquico, saldos por lote, capacidade, ocupação estimada, movimentações recentes e tarefas abertas.
-- Modo de organização visual restrito ao perfil Gestão. Arrastar um endereço para uma célula vazia do mesmo nível atualiza `locations.pos_x` e `locations.pos_y`.
+- Detalhes contextuais do endereço selecionado: caminho hierárquico, saldos por lote, validade quando cadastrada, capacidade, ocupação estimada quando as unidades forem compatíveis, movimentações recentes e tarefas abertas.
+- Modo de organização visual restrito ao perfil Gestão. Arrastar um endereço para uma célula vazia do mesmo nível atualiza `locations.pos_x` e `locations.pos_y`; controles por setas oferecem uma alternativa para dispositivos sem suporte prático a arrastar.
 - Reaproveitamento dos campos `pos_x` e `pos_y` já existentes na migração inicial. Nenhuma migração nova é necessária para o mapa.
 - A visualização é explicitamente identificada como esquemática; as coordenadas não representam medidas físicas ou planta técnica.
 
@@ -40,9 +40,9 @@
 1. Entrar como Gestão, abrir Armazém e endereçamento e confirmar que todos os níveis aparecem no mapa.
 2. Reposicionar um endereço em uma célula vazia e recarregar a página; confirmar que a posição foi preservada.
 3. Confirmar que não é possível soltar um endereço em célula ocupada ou em outro nível hierárquico.
-4. Pesquisar por código de endereço, nome de material e código de material.
+4. Pesquisar por código/nome de endereço, nível, código/descrição de material e código de barras.
 5. Aplicar cada filtro e confirmar que os ancestrais de resultados continuam visíveis.
-6. Selecionar um endereço com saldo e conferir lote, quantidade e unidade.
+6. Selecionar um endereço com saldo e conferir lote, quantidade, unidade e validade quando cadastrada.
 7. Conferir movimentações recentes e tarefas relacionadas.
 8. Repetir a consulta como Consulta e Operação; confirmar que o modo de edição não aparece.
 9. Testar o mapa em desktop, tablet e celular, incluindo zoom e rolagem horizontal/vertical.
