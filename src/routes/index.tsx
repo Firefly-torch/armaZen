@@ -559,7 +559,7 @@ function Index() {
   </div>;
 
   const addressSearch = search.trim().toLocaleLowerCase("pt-BR");
-  const addressById = new Map<string, AnyRow>(locations.map(location => [location.id, location]));
+  const addressById = new Map<string, AnyRow>(locations.map(location => [location.id, location] as const));
   const addressChildrenByParent = new Map<string | null, AnyRow[]>();
   for (const location of locations) {
     const siblings = addressChildrenByParent.get(location.parent_id ?? null) ?? [];
