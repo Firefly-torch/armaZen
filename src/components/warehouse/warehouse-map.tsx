@@ -107,6 +107,12 @@ type WarehouseMapProps = {
   onWarehouseChange: (value: string) => void;
   onSelectLocation: (value: string | null) => void;
   onUpdatePosition: (locationId: string, posX: number, posY: number) => Promise<void>;
+  onSwapPositions: (
+    draggedId: string,
+    targetId: string,
+    draggedPosition: { x: number; y: number },
+    targetPosition: { x: number; y: number },
+  ) => Promise<void>;
   onOpenTasks: () => void;
   onOpenMovements: () => void;
 };
@@ -182,6 +188,7 @@ export function WarehouseMap({
   onWarehouseChange,
   onSelectLocation,
   onUpdatePosition,
+  onSwapPositions,
   onOpenTasks,
   onOpenMovements,
 }: WarehouseMapProps) {
@@ -191,6 +198,7 @@ export function WarehouseMap({
   const [editMode, setEditMode] = useState(false);
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
   const [draggedId, setDraggedId] = useState<string | null>(null);
+  const [dropTargetId, setDropTargetId] = useState<string | null>(null);
   const [mapError, setMapError] = useState("");
 
   const activeWarehouses = useMemo(
@@ -478,13 +486,66 @@ export function WarehouseMap({
     }
   };
 
+  const swapLocations = async (draggedLocationId: string, targetLocationId: string) => {
+    if (!canManage || saving || draggedLocationId === targetLocationId) return;
+    const draggedLocation = locationsById.get(draggedLocationId);
+    const targetLocation = locationsById.get(targetLocationId);
+    if (!draggedLocation || !targetLocation) return;
+    if (draggedLocation.parent_id !== targetLocation.parent_id) {
+      setMapError("Só é possível trocar endereços que pertencem ao mesmo grupo.");
+      return;
+    }
+    const siblingPositions = positionsByParent.get(draggedLocation.parent_id ?? null);
+    const draggedPosition = siblingPositions?.get(draggedLocationId);
+    const targetPosition = siblingPositions?.get(targetLocationId);
+    if (!draggedPosition || !targetPosition) {
+      setMapError("Não foi possível identificar as posições atuais dos endereços.");
+      return;
+    }
+    if (draggedPosition.x === targetPosition.x && draggedPosition.y === targetPosition.y) return;
+    setMapError("");
+    try {
+      await onSwapPositions(draggedLocationId, targetLocationId, draggedPosition, targetPosition);
+    } catch (error) {
+      setMapError(error instanceof Error ? error.message : "Não foi possível trocar as posições.");
+    }
+  };
+
+  const moveSelected = (deltaX: number, deltaY: number) => {
+    if (!selectedLocation || !selectedPosition || !editMode || !canManage || saving) return;
+    const nextX = Math.max(1, Math.min(GRID_COLUMNS, selectedPosition.x + deltaX));
+    const nextY = Math.max(1, selectedPosition.y + deltaY);
+    const siblings = childrenByParent.get(selectedLocation.parent_id ?? null) ?? [];
+    const target = siblings.find((sibling) => {
+      if (sibling.id === selectedLocation.id) return false;
+      const position = positionsByParent.get(selectedLocation.parent_id ?? null)?.get(sibling.id);
+      return position?.x === nextX && position?.y === nextY;
+    });
+    if (target) {
+      void swapLocations(selectedLocation.id, target.id);
+    } else {
+      void changePosition(selectedLocation.id, selectedLocation.parent_id ?? null, nextX, nextY);
+    }
+  };
+
   function renderLocationNode(location: LocationItem, depth: number): ReactNode {
     const children = childrenByParent.get(location.id) ?? [];
     const hasChildren = children.length > 0;
     const isCollapsed = collapsed.has(location.id);
-    const position = positionsByParent.get(location.parent_id ?? null)?.get(location.id);
     const directBalances = getLocationBalances(location.id);
     const expiryCounts = getExpiryCounts(location.id);
+    const materialCount = new Set(directBalances.map((balance) => balance.material_id)).size;
+    const openTaskCount = tasks.filter((task) => task.location_id === location.id && task.status !== "concluida").length;
+    const unitTotals = getUnitTotals(location.id);
+    const capacityUnit = String(location.capacity_unit ?? "").trim().toLowerCase();
+    const capacityCompatible = Boolean(
+      location.capacity &&
+      (unitTotals.size === 0 || (unitTotals.size === 1 && [...unitTotals.keys()][0]?.toLowerCase() === capacityUnit)),
+    );
+    const capacityQuantity = unitTotals.size === 1 ? ([...unitTotals.values()][0] ?? 0) : 0;
+    const capacityPercent = location.capacity && capacityCompatible
+      ? Math.min(100, Math.round((capacityQuantity / Number(location.capacity)) * 100))
+      : null;
     const isSelected = selectedLocationId === location.id;
     const dimmed = !directMatch(location) && normalizedQuery.length > 0;
     const nodeClass =
@@ -508,7 +569,28 @@ export function WarehouseMap({
           event.dataTransfer.setData("text/plain", location.id);
           event.dataTransfer.effectAllowed = "move";
         }}
-        onDragEnd={() => setDraggedId(null)}
+        onDragOver={(event) => {
+          if (!editMode || !canManage || saving || !draggedId || draggedId === location.id) return;
+          const draggedLocation = locationsById.get(draggedId);
+          if (!draggedLocation || draggedLocation.parent_id !== location.parent_id) return;
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "move";
+          setDropTargetId(location.id);
+        }}
+        onDragLeave={() => setDropTargetId((current) => current === location.id ? null : current)}
+        onDrop={(event) => {
+          if (!editMode || !canManage || saving) return;
+          event.preventDefault();
+          event.stopPropagation();
+          const sourceId = event.dataTransfer.getData("text/plain") || draggedId;
+          setDraggedId(null);
+          setDropTargetId(null);
+          if (sourceId && sourceId !== location.id) void swapLocations(sourceId, location.id);
+        }}
+        onDragEnd={() => {
+          setDraggedId(null);
+          setDropTargetId(null);
+        }}
         className="min-w-0 w-full"
         style={{
           // Structural nodes occupy the full width of their branch grid.
@@ -524,7 +606,10 @@ export function WarehouseMap({
             selectedClass +
             " " +
             lowStockClass +
-            (dimmed ? " opacity-40" : "")
+            (dimmed ? " opacity-40" : "") +
+            (draggedId === location.id ? " scale-[0.98] opacity-45" : "") +
+            (dropTargetId === location.id ? " ring-2 ring-primary ring-offset-2 border-dashed" : "") +
+            (editMode && canManage ? " cursor-grab active:cursor-grabbing" : "")
           }
         >
           <div className="flex items-start justify-between gap-2">
@@ -574,6 +659,26 @@ export function WarehouseMap({
               {getQuantityLabel(location.id)}
             </span>
           </div>
+          <div className="mt-3 grid grid-cols-2 gap-1.5">
+            <div className="rounded-md border border-slate-200/80 bg-background/70 px-2 py-1.5 dark:border-slate-700">
+              <p className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">Materiais diretos</p>
+              <p className="text-xs font-semibold tabular-nums">{materialCount}</p>
+            </div>
+            <div className="rounded-md border border-slate-200/80 bg-background/70 px-2 py-1.5 dark:border-slate-700">
+              <p className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">{hasChildren ? "Subendereços" : "Tarefas abertas"}</p>
+              <p className="text-xs font-semibold tabular-nums">{hasChildren ? children.length : openTaskCount}</p>
+            </div>
+            {location.capacity != null && (
+              <div className="col-span-2 rounded-md border border-slate-200/80 bg-background/70 px-2 py-1.5 dark:border-slate-700">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">Capacidade</p>
+                  <p className="text-xs font-semibold tabular-nums">{capacityPercent === null ? "Não calculada" : capacityPercent + "%"}</p>
+                </div>
+                <p className="text-[10px] text-muted-foreground">{formatQuantity(capacityQuantity)} {unitTotals.size === 1 ? [...unitTotals.keys()][0] : ""} / {formatQuantity(Number(location.capacity))} {location.capacity_unit ?? ""}</p>
+                {capacityPercent !== null && <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-primary" style={{ width: capacityPercent + "%" }} /></div>}
+              </div>
+            )}
+          </div>
           {isLowStock(location.id) && (
             <p className="mt-2 text-[11px] font-semibold text-amber-700 dark:text-amber-300">
               Estoque abaixo do mínimo
@@ -594,9 +699,9 @@ export function WarehouseMap({
             </div>
           )}
           {editMode && canManage && (
-            <div className="mt-2 flex items-center gap-1 text-[10px] text-muted-foreground">
+            <div className="mt-2 flex items-center gap-1 rounded-md border border-dashed border-primary/35 bg-primary/5 px-2 py-1.5 text-[10px] font-medium text-primary">
               <Move className="h-3 w-3" />
-              Arraste para uma célula vazia do mesmo nível
+              Arraste sobre outro endereço do mesmo grupo para trocar posições
             </div>
           )}
         </div>

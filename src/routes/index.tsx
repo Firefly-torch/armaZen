@@ -5,7 +5,7 @@ import * as XLSX from "xlsx";
 import {
   Activity, AlertTriangle, ArrowLeftRight, Boxes, CheckCircle2, ClipboardCheck,
   ClipboardList, Download, LayoutDashboard, MapPinned, Package, Plus, RefreshCw,
-  ShieldCheck, Warehouse, Pencil, Search, Ban, Check, Users,
+  ShieldCheck, Warehouse, Pencil, Search, Ban, Check, Users, GripVertical, MapPin, CalendarClock,
 } from "lucide-react";
 import { WarehouseMap } from "@/components/warehouse/warehouse-map";
 import { supabase } from "@/integrations/supabase/client";
@@ -268,6 +268,8 @@ function Index() {
   const [inventoryForm, setInventoryForm] = useState({ warehouse_id: "todos", description: "" });
   const [attributeForm, setAttributeForm] = useState({ id: "", key: "", label: "", data_type: "text", required: false });
   const [attributeValues, setAttributeValues] = useState<Record<string, string>>({});
+  const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
+  const [dragOverTaskStatus, setDragOverTaskStatus] = useState<string | null>(null);
 
   const refresh = useCallback(() => setReload(n => n + 1), []);
   const notify = (msg: string) => { setMessage(msg); setDataError(""); };
@@ -593,12 +595,47 @@ function Index() {
       onWarehouseChange={(value) => { setMapWarehouseId(value); setMapSelectedLocationId(""); }}
       onSelectLocation={(value) => setMapSelectedLocationId(value ?? "")}
       onUpdatePosition={(locationId, posX, posY) => runSave(async () => {
-        const { error } = await db.from("locations")
+        const { error, data } = await db.from("locations")
           .update({ pos_x: posX, pos_y: posY, updated_at: new Date().toISOString() })
           .eq("id", locationId)
-          .eq("org_id", orgId);
+          .eq("org_id", orgId)
+          .select("id")
+          .maybeSingle();
         if (error) throw error;
+        if (!data) throw new Error("Endereço não encontrado ou sem permissão para alterar sua posição.");
       }, "Posição visual atualizada.")}
+      onSwapPositions={(draggedId, targetId, draggedPosition, targetPosition) => runSave(async () => {
+        const draggedLocation = locations.find((location) => location.id === draggedId);
+        const targetLocation = locations.find((location) => location.id === targetId);
+        if (!draggedLocation || !targetLocation || draggedLocation.parent_id !== targetLocation.parent_id) {
+          throw new Error("Os endereços precisam pertencer ao mesmo grupo.");
+        }
+        const timestamp = new Date().toISOString();
+        const first = await db.from("locations")
+          .update({ pos_x: targetPosition.x, pos_y: targetPosition.y, updated_at: timestamp })
+          .eq("id", draggedId)
+          .eq("org_id", orgId)
+          .select("id")
+          .maybeSingle();
+        if (first.error) throw first.error;
+        if (!first.data) throw new Error("Não foi possível atualizar o primeiro endereço.");
+        const second = await db.from("locations")
+          .update({ pos_x: draggedPosition.x, pos_y: draggedPosition.y, updated_at: timestamp })
+          .eq("id", targetId)
+          .eq("org_id", orgId)
+          .select("id")
+          .maybeSingle();
+        if (second.error || !second.data) {
+          const rollback = await db.from("locations")
+            .update({ pos_x: draggedPosition.x, pos_y: draggedPosition.y, updated_at: new Date().toISOString() })
+            .eq("id", draggedId)
+            .eq("org_id", orgId);
+          if (rollback.error) {
+            throw new Error("A troca ficou incompleta e a reversão automática falhou. Confira as posições dos dois endereços.");
+          }
+          throw second.error ?? new Error("Não foi possível atualizar o segundo endereço. A primeira alteração foi revertida.");
+        }
+      }, "Posições dos endereços trocadas.")}
       onOpenTasks={() => setSection("tasks")}
       onOpenMovements={() => setSection("movements")}
     />
@@ -679,13 +716,286 @@ function Index() {
     </Panel>
   </div>;
 
+  const taskStatusMeta: Record<string, { label: string; description: string; column: string; dot: string; count: string }> = {
+    a_fazer: {
+      label: "A fazer",
+      description: "Atividades aguardando início",
+      column: "border-slate-200 bg-slate-50/90 dark:border-slate-700 dark:bg-slate-900/50",
+      dot: "bg-slate-400",
+      count: "bg-slate-200 text-slate-800 dark:bg-slate-700 dark:text-slate-100",
+    },
+    em_andamento: {
+      label: "Em andamento",
+      description: "Atividades em execução",
+      column: "border-blue-200 bg-blue-50/70 dark:border-blue-900 dark:bg-blue-950/25",
+      dot: "bg-blue-500",
+      count: "bg-blue-100 text-blue-900 dark:bg-blue-900/60 dark:text-blue-100",
+    },
+    aguardando: {
+      label: "Aguardando",
+      description: "Dependências ou conferências pendentes",
+      column: "border-amber-200 bg-amber-50/70 dark:border-amber-900 dark:bg-amber-950/25",
+      dot: "bg-amber-500",
+      count: "bg-amber-100 text-amber-900 dark:bg-amber-900/60 dark:text-amber-100",
+    },
+    concluida: {
+      label: "Concluída",
+      description: "Atividades finalizadas",
+      column: "border-emerald-200 bg-emerald-50/70 dark:border-emerald-900 dark:bg-emerald-950/25",
+      dot: "bg-emerald-500",
+      count: "bg-emerald-100 text-emerald-900 dark:bg-emerald-900/60 dark:text-emerald-100",
+    },
+  };
+  const taskPriorityMeta: Record<string, { label: string; className: string; stripe: string }> = {
+    baixa: { label: "Baixa", className: "border-slate-200 bg-slate-100 text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200", stripe: "border-l-slate-300 dark:border-l-slate-600" },
+    media: { label: "Média", className: "border-sky-200 bg-sky-50 text-sky-800 dark:border-sky-900 dark:bg-sky-950/40 dark:text-sky-200", stripe: "border-l-sky-400" },
+    alta: { label: "Alta", className: "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200", stripe: "border-l-amber-500" },
+    urgente: { label: "Urgente", className: "border-red-300 bg-red-50 text-red-800 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200", stripe: "border-l-red-500" },
+  };
+  const updateTaskStatus = (taskId: string, nextStatus: string) => {
+    const currentTask = tasks.find((task) => task.id === taskId);
+    if (!canOperate || saving || !currentTask || currentTask.status === nextStatus) return;
+    void runSave(async () => {
+      const now = new Date().toISOString();
+      const { error, data } = await db.from("tasks")
+        .update({
+          status: nextStatus,
+          updated_at: now,
+          completed_at: nextStatus === "concluida" ? (currentTask.completed_at ?? now) : null,
+        })
+        .eq("id", taskId)
+        .eq("org_id", orgId)
+        .select("id")
+        .maybeSingle();
+      if (error) throw error;
+      if (!data) throw new Error("Tarefa não encontrada ou sem permissão para alterar o status.");
+    }, "Status da tarefa atualizado.");
+  };
+  const taskLocationLabel = (locationId: string | null | undefined) => {
+    if (!locationId) return "Endereço não vinculado";
+    const location = locations.find((item) => item.id === locationId);
+    if (!location) return "Endereço indisponível";
+    const warehouse = warehouses.find((item) => item.id === location.warehouse_id);
+    return [warehouse?.code, location.code, location.name].filter(Boolean).join(" · ");
+  };
+  const taskMaterialLabel = (materialId: string | null | undefined) => {
+    if (!materialId) return "Material não vinculado";
+    const material = materials.find((item) => item.id === materialId);
+    return material ? `${material.code} · ${material.description}` : "Material indisponível";
+  };
+  const taskAssigneeLabel = (assigneeId: string | null | undefined) => {
+    if (!assigneeId) return "Sem responsável";
+    const member = members.find((item) => item.user_id === assigneeId);
+    return member?.profiles?.full_name || member?.profiles?.email || `Membro ${assigneeId.slice(0, 8)}`;
+  };
+  const filteredKanbanTasks = filtered(tasks, ["title", "description", "type", "priority"]);
+
   const tasksSection = <div className="space-y-5">
     <Panel title={taskForm.id?"Editar tarefa":"Criar tarefa operacional"} description="Alterar o status da tarefa não movimenta estoque. A operação física deve ser registrada no módulo Movimentações.">
       {canOperate?<form className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3" onSubmit={e=>{e.preventDefault();void runSave(async()=>{const p={org_id:orgId,title:taskForm.title.trim(),description:taskForm.description.trim()||null,type:taskForm.type,priority:taskForm.priority,status:taskForm.status,assignee_id:taskForm.assignee_id||null,due_at:taskForm.due_at?new Date(taskForm.due_at).toISOString():null,material_id:taskForm.material_id||null,location_id:taskForm.location_id||null,updated_at:new Date().toISOString(),completed_at:taskForm.status==="concluida"?new Date().toISOString():null,...(!taskForm.id?{created_by:user?.id}:{})};const q=taskForm.id?db.from("tasks").update(p).eq("id",taskForm.id):db.from("tasks").insert(p);const {error}=await q;if(error)throw error;setTaskForm({id:"",title:"",description:"",type:"recebimento",priority:"media",status:"a_fazer",assignee_id:"",due_at:"",material_id:"",location_id:""});},"Tarefa salva.");}}><Field label="Título" value={taskForm.title} onChange={v=>setTaskForm({...taskForm,title:v})} required/><SelectField label="Tipo de tarefa" value={taskForm.type} onChange={v=>setTaskForm({...taskForm,type:v})} options={taskTypes.map(v=>({value:v,label:v.replaceAll("_"," ")}))} required/><SelectField label="Prioridade" value={taskForm.priority} onChange={v=>setTaskForm({...taskForm,priority:v})} options={priorities.map(v=>({value:v,label:v}))} required/><SelectField label="Status" value={taskForm.status} onChange={v=>setTaskForm({...taskForm,status:v})} options={taskStatuses.map(v=>({value:v,label:v.replaceAll("_"," ")}))} required/><Field label="Prazo" type="datetime-local" value={taskForm.due_at} onChange={v=>setTaskForm({...taskForm,due_at:v})}/><SelectField label="Responsável (membro)" value={taskForm.assignee_id} onChange={v=>setTaskForm({...taskForm,assignee_id:v})} options={members.map(m=>({value:m.user_id,label:m.profiles?.full_name||m.profiles?.email||m.user_id.slice(0,8)}))}/><SelectField label="Material relacionado" value={taskForm.material_id} onChange={v=>setTaskForm({...taskForm,material_id:v})} options={materials.map(m=>({value:m.id,label:`${m.code} — ${m.description}`}))}/><SelectField label="Endereço relacionado" value={taskForm.location_id} onChange={v=>setTaskForm({...taskForm,location_id:v})} options={locations.map(l=>({value:l.id,label:`${l.code} — ${l.name}`}))}/><label className="grid gap-1.5 text-sm sm:col-span-2"><span className="font-medium">Descrição</span><textarea className="min-h-20 rounded-lg border bg-background p-3" value={taskForm.description} onChange={e=>setTaskForm({...taskForm,description:e.target.value})}/></label><div className="flex items-end gap-2"><button disabled={saving} className="h-10 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground">{taskForm.id?"Salvar alterações":"Criar tarefa"}</button>{taskForm.id&&<button type="button" className="h-10 rounded-lg border px-3 text-sm" onClick={()=>setTaskForm({id:"",title:"",description:"",type:"recebimento",priority:"media",status:"a_fazer",assignee_id:"",due_at:"",material_id:"",location_id:""})}>Cancelar</button>}</div></form>:<Empty>O perfil atual não possui permissão para criar ou atualizar tarefas.</Empty>}
     </Panel>
-    <Panel title="Quadro Kanban" description="Status persistidos no banco, com filtros por texto e alertas de prazo.">
-      <div className="mb-4 flex gap-2"><Search className="mt-2.5 h-4 w-4 text-muted-foreground"/><input className="h-10 w-full max-w-sm rounded-lg border bg-background px-3 text-sm" placeholder="Pesquisar tarefas..." value={search} onChange={e=>setSearch(e.target.value)}/></div>
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">{taskStatuses.map(status=><div key={status} className="min-h-48 rounded-xl bg-muted/40 p-3"><div className="mb-3 flex items-center justify-between"><h3 className="text-sm font-semibold">{status.replaceAll("_"," ")}</h3><span className="rounded-full bg-background px-2 py-0.5 text-xs">{tasks.filter(t=>t.status===status).length}</span></div><div className="space-y-3">{filtered(tasks.filter(t=>t.status===status),["title","description","type","priority"]).map(t=><article key={t.id} className="rounded-lg border bg-card p-3 shadow-sm"><div className="flex items-start justify-between gap-2"><p className="font-medium">{t.title}</p>{t.priority==="urgente"||t.priority==="alta"?<AlertTriangle className="h-4 w-4 shrink-0 text-amber-600"/>:null}</div><p className="mt-1 text-xs text-muted-foreground">{t.type.replaceAll("_"," ")} · {t.priority}</p><p className={`mt-2 text-xs ${t.due_at&&new Date(t.due_at).getTime()<Date.now()&&t.status!=="concluida"?"font-semibold text-destructive":"text-muted-foreground"}`}>Prazo: {dateLabel(t.due_at)}{t.due_at&&new Date(t.due_at).getTime()<Date.now()&&t.status!=="concluida"?" · atrasada":""}</p><div className="mt-3 flex flex-wrap gap-2">{canOperate&&<select aria-label="Alterar status" className="h-8 min-w-0 flex-1 rounded border bg-background px-2 text-xs" value={t.status} onChange={e=>void runSave(async()=>{const {error}=await db.from("tasks").update({status:e.target.value,updated_at:new Date().toISOString(),completed_at:e.target.value==="concluida"?new Date().toISOString():null}).eq("id",t.id).eq("org_id",orgId);if(error)throw error;},"Status da tarefa atualizado.")}>{taskStatuses.map(s=><option key={s} value={s}>{s.replaceAll("_"," ")}</option>)}</select>}{canOperate&&<button className="rounded border p-1.5" title="Editar tarefa" onClick={()=>setTaskForm({id:t.id,title:t.title,description:t.description??"",type:t.type,priority:t.priority,status:t.status,assignee_id:t.assignee_id??"",due_at:t.due_at?new Date(t.due_at).toISOString().slice(0,16):"",material_id:t.material_id??"",location_id:t.location_id??""})}><Pencil className="h-3.5 w-3.5"/></button>}</div></article>)}</div></div>)}</div>
+    <Panel title="Quadro Kanban" description="Acompanhe atividades por etapa. Arraste um cartão para outra coluna para atualizar o status; no celular, use o seletor do próprio cartão.">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <input
+            className="h-10 w-full max-w-sm min-w-0 rounded-lg border bg-background px-3 text-sm"
+            placeholder="Pesquisar tarefas, materiais ou endereços..."
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+          />
+        </div>
+        <p className="text-xs text-muted-foreground">Dica: arraste pelo cartão no computador ou altere a etapa pelo seletor.</p>
+      </div>
+
+      <div className="grid min-w-0 grid-cols-1 gap-3 md:grid-cols-2 2xl:grid-cols-4">
+        {taskStatuses.map((status) => {
+          const meta = taskStatusMeta[status] ?? taskStatusMeta.a_fazer!;
+          const laneTasks = filteredKanbanTasks.filter((task) => task.status === status);
+          const isDropTarget = dragOverTaskStatus === status;
+          return (
+            <section
+              key={status}
+              className={
+                "min-w-0 rounded-2xl border-2 p-3 transition-all " +
+                meta.column +
+                (isDropTarget ? " ring-2 ring-primary ring-offset-2 border-primary" : "")
+              }
+            >
+              <div className="mb-3 flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className={"h-2.5 w-2.5 shrink-0 rounded-full " + meta.dot} />
+                    <h3 className="break-words text-sm font-bold">{meta.label}</h3>
+                    <span className={"rounded-full px-2 py-0.5 text-[10px] font-bold tabular-nums " + meta.count}>
+                      {tasks.filter((task) => task.status === status).length}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-[10px] text-muted-foreground">{meta.description}</p>
+                </div>
+                {isDropTarget && <span className="shrink-0 rounded-full bg-primary px-2 py-1 text-[10px] font-semibold text-primary-foreground">Soltar aqui</span>}
+              </div>
+
+              <div
+                className="min-h-36 space-y-3 rounded-xl"
+                onDragOver={(event) => {
+                  if (!canOperate || saving || !draggedTaskId) return;
+                  event.preventDefault();
+                  event.dataTransfer.dropEffect = "move";
+                  setDragOverTaskStatus(status);
+                }}
+                onDragLeave={(event) => {
+                  if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                    setDragOverTaskStatus((current) => current === status ? null : current);
+                  }
+                }}
+                onDrop={(event) => {
+                  if (!canOperate || saving) return;
+                  event.preventDefault();
+                  const taskId = event.dataTransfer.getData("text/plain") || draggedTaskId;
+                  setDraggedTaskId(null);
+                  setDragOverTaskStatus(null);
+                  if (taskId) updateTaskStatus(taskId, status);
+                }}
+              >
+                {laneTasks.map((task) => {
+                  const overdue = Boolean(
+                    task.due_at &&
+                    new Date(task.due_at).getTime() < Date.now() &&
+                    task.status !== "concluida"
+                  );
+                  const priority = taskPriorityMeta[task.priority] ?? taskPriorityMeta.media!;
+                  const isDragging = draggedTaskId === task.id;
+                  return (
+                    <article
+                      key={task.id}
+                      draggable={canOperate && !saving}
+                      onDragStart={(event) => {
+                        if (!canOperate || saving) {
+                          event.preventDefault();
+                          return;
+                        }
+                        setDraggedTaskId(task.id);
+                        event.dataTransfer.setData("text/plain", task.id);
+                        event.dataTransfer.effectAllowed = "move";
+                      }}
+                      onDragEnd={() => {
+                        setDraggedTaskId(null);
+                        setDragOverTaskStatus(null);
+                      }}
+                      className={
+                        "min-w-0 rounded-xl border border-l-4 bg-card p-3 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md " +
+                        priority.stripe +
+                        (isDragging ? " scale-[0.98] opacity-45" : "") +
+                        (canOperate ? " cursor-grab active:cursor-grabbing" : "")
+                      }
+                    >
+                      <div className="flex min-w-0 items-start gap-2">
+                        {canOperate && <GripVertical className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />}
+                        <div className="min-w-0 flex-1">
+                          <h4 className="break-words text-sm font-semibold leading-snug">{task.title}</h4>
+                          <div className="mt-2 flex flex-wrap gap-1.5">
+                            <span className="rounded-full border bg-muted/60 px-2 py-0.5 text-[10px] font-medium capitalize">
+                              {task.type.replaceAll("_", " ")}
+                            </span>
+                            <span className={"rounded-full border px-2 py-0.5 text-[10px] font-semibold " + priority.className}>
+                              {priority.label}
+                            </span>
+                          </div>
+                        </div>
+                        {(task.priority === "urgente" || task.priority === "alta") && (
+                          <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600" />
+                        )}
+                      </div>
+
+                      {task.description && (
+                        <p className="mt-3 line-clamp-3 break-words text-xs leading-relaxed text-muted-foreground">
+                          {task.description}
+                        </p>
+                      )}
+
+                      <div className="mt-3 grid min-w-0 gap-2">
+                        <div className="flex min-w-0 items-start gap-2 rounded-lg bg-muted/45 px-2.5 py-2">
+                          <Package className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                          <div className="min-w-0">
+                            <p className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">Material</p>
+                            <p className="break-words text-xs font-medium [overflow-wrap:anywhere]">{taskMaterialLabel(task.material_id)}</p>
+                          </div>
+                        </div>
+                        <div className="flex min-w-0 items-start gap-2 rounded-lg bg-muted/45 px-2.5 py-2">
+                          <MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                          <div className="min-w-0">
+                            <p className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">Endereço</p>
+                            <p className="break-words text-xs font-medium [overflow-wrap:anywhere]">{taskLocationLabel(task.location_id)}</p>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t pt-3">
+                        <div className="flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+                          <Users className="h-3.5 w-3.5 shrink-0" />
+                          <span className="break-words">{taskAssigneeLabel(task.assignee_id)}</span>
+                        </div>
+                        <div className={"flex items-center gap-1 text-[11px] " + (overdue ? "font-semibold text-destructive" : "text-muted-foreground")}>
+                          <CalendarClock className="h-3.5 w-3.5 shrink-0" />
+                          <span>{task.due_at ? dateLabel(task.due_at) : "Sem prazo"}{overdue ? " · atrasada" : ""}</span>
+                        </div>
+                      </div>
+
+                      {canOperate && (
+                        <div className="mt-3 flex min-w-0 items-center gap-2">
+                          <label className="min-w-0 flex-1">
+                            <span className="sr-only">Mover tarefa para outra etapa</span>
+                            <select
+                              aria-label={"Mover " + task.title + " para outra etapa"}
+                              className="h-9 w-full min-w-0 rounded-lg border bg-background px-2 text-xs font-medium"
+                              value={task.status}
+                              disabled={saving}
+                              onChange={(event) => updateTaskStatus(task.id, event.target.value)}
+                            >
+                              {taskStatuses.map((nextStatus) => (
+                                <option key={nextStatus} value={nextStatus}>
+                                  Mover para: {taskStatusMeta[nextStatus]?.label ?? nextStatus}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <button
+                            type="button"
+                            className="h-9 shrink-0 rounded-lg border bg-background p-2 hover:bg-muted"
+                            title="Editar tarefa"
+                            aria-label={"Editar tarefa " + task.title}
+                            onClick={() => setTaskForm({
+                              id: task.id,
+                              title: task.title,
+                              description: task.description ?? "",
+                              type: task.type,
+                              priority: task.priority,
+                              status: task.status,
+                              assignee_id: task.assignee_id ?? "",
+                              due_at: task.due_at ? new Date(task.due_at).toISOString().slice(0, 16) : "",
+                              material_id: task.material_id ?? "",
+                              location_id: task.location_id ?? "",
+                            })}
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      )}
+                    </article>
+                  );
+                })}
+
+                {laneTasks.length === 0 && (
+                  <div className="flex min-h-24 items-center justify-center rounded-xl border border-dashed border-current/20 px-3 py-5 text-center text-xs text-muted-foreground">
+                    {search.trim() ? "Nenhuma tarefa corresponde à pesquisa nesta etapa." : "Solte uma tarefa aqui ou crie uma nova atividade."}
+                  </div>
+                )}
+              </div>
+            </section>
+          );
+        })}
+      </div>
     </Panel>
   </div>;
 
