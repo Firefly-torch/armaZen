@@ -54,15 +54,15 @@ O login demonstrativo não aceita e-mail ou senha arbitrários e não altera a s
 ## Módulos
 
 - **Dashboard:** indicadores do Supabase, filtro por armazém e período, estoque agrupado por unidade de medida, ocupação estimada de posições e tendência de movimentações.
-- **Armazém e endereçamento:** estrutura hierárquica configurável, mapa geral com todos os níveis, pesquisa por material/endereço, filtros de situação, organização visual por Gestão e detalhes contextuais de saldo, movimentações e tarefas.
-- **Materiais e estoque:** cadastro, saldos por endereço, alertas de estoque mínimo e campos adicionais configuráveis.
+- **Armazém e endereçamento:** estrutura hierárquica configurável, mapa geral responsivo, pesquisa por material/endereço/código de barras, filtros de situação e validade, organização visual por Gestão e detalhes contextuais adaptados a telas pequenas.
+- **Materiais e estoque:** cadastro, saldos por endereço, alertas de estoque mínimo e validade de lotes, além de campos adicionais configuráveis.
 - **Movimentações:** entradas, saídas, transferências, ajustes e estornos por funções transacionais do banco.
 - **Inventário:** sessões de contagem, quantidade esperada e contada, divergências e histórico. Uma sessão concluída não aceita novas contagens.
 - **Tarefas:** Kanban integrado ao armazém; mudar uma tarefa não altera o estoque.
 - **Exportação para ERP:** CSV, XLSX e JSON com prévia, seleção e mapeamento de campos, filtros de data e modelos reutilizáveis. Exportar não sincroniza com o ERP.
 - **Usuários e configurações:** perfis de organização e atributos personalizados dos materiais, conforme permissões.
 
-O layout se adapta a computadores, tablets e celulares. As tabelas usam paginação no conjunto de dados carregado; consultas gerais ainda têm um limite de carregamento por lista e não são destinadas a volumes ilimitados nesta versão acadêmica.
+O layout se adapta a computadores, tablets e celulares. Em telas pequenas, as tabelas gerais são apresentadas como cartões de leitura; os detalhes do mapa também usam cartões responsivos, e a página evita rolagem horizontal global. As tabelas usam paginação no conjunto de dados carregado; consultas gerais ainda têm um limite de carregamento por lista e não são destinadas a volumes ilimitados nesta versão acadêmica.
 
 ## Comandos úteis
 
