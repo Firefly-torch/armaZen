@@ -97,12 +97,18 @@ function Table({ headers, rows, pageSize = 10 }: { headers: string[]; rows: Reac
         <tbody className="divide-y">{visibleRows.map((row, i) => <tr key={currentPage * pageSize + i} className="hover:bg-muted/30">{row.map((cell, j) => <td key={j} className="max-w-[22rem] px-3 py-3 align-middle"><div className="min-w-0 break-words [overflow-wrap:anywhere]">{cell}</div></td>)}</tr>)}</tbody>
       </table>
     </div>
-    <div className="grid min-w-0 gap-2 sm:hidden">
-      {visibleRows.map((row, i) => <article key={currentPage * pageSize + i} className="min-w-0 overflow-hidden rounded-lg border bg-card p-3 shadow-sm">
-        <dl className="grid min-w-0 gap-2">{row.map((cell, j) => <div key={j} className="grid min-w-0 gap-1 rounded-md bg-muted/35 px-3 py-2">
-          <dt className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{headers[j]}</dt>
-          <dd className="min-w-0 break-words text-sm [overflow-wrap:anywhere] [&_div.flex]:flex-wrap">{cell}</dd>
-        </div>)}</dl>
+    <div className="grid min-w-0 gap-3 sm:hidden">
+      {visibleRows.map((row, i) => <article key={currentPage * pageSize + i} className="min-w-0 overflow-hidden rounded-xl border-2 border-slate-300 border-l-4 border-l-primary bg-card p-3 shadow-md ring-1 ring-slate-200/70 dark:border-slate-600 dark:ring-slate-800">
+        <dl className="grid min-w-0 gap-2.5">
+          {row[0] !== undefined && <div className="min-w-0 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2.5">
+            <dt className="text-[10px] font-bold uppercase tracking-wider text-primary">{headers[0]}</dt>
+            <dd className="mt-1 min-w-0 break-words text-sm font-semibold text-foreground [overflow-wrap:anywhere] [&_div.flex]:flex-wrap">{row[0]}</dd>
+          </div>}
+          {row.slice(1).map((cell, j) => <div key={j + 1} className="grid min-w-0 gap-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 odd:bg-white dark:border-slate-700 dark:bg-slate-900/40 dark:odd:bg-slate-950/30">
+            <dt className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{headers[j + 1]}</dt>
+            <dd className="min-w-0 break-words text-sm text-foreground [overflow-wrap:anywhere] [&_div.flex]:flex-wrap">{cell}</dd>
+          </div>)}
+        </dl>
       </article>)}
     </div>
     {rows.length > pageSize && <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
@@ -742,11 +748,23 @@ function Index() {
   return <div className="min-h-screen w-full max-w-full overflow-x-clip bg-background text-foreground md:flex">
     <aside className="flex min-w-0 w-full max-w-full flex-col border-b bg-[var(--sidebar)] text-[var(--sidebar-foreground)] md:fixed md:inset-y-0 md:w-64 md:border-b-0 md:border-r md:border-[var(--sidebar-border)]">
       <div className="flex items-center gap-3 border-b border-[var(--sidebar-border)] px-5 py-5"><div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary text-primary-foreground"><Warehouse className="h-5 w-5"/></div><div><p className="text-lg font-bold">armaZen</p><p className="text-xs text-[var(--sidebar-muted)]">Sistema de gestão de armazém</p></div></div>
-      <nav aria-label="Navegação principal" className="grid grid-cols-2 gap-1 p-3 sm:grid-cols-3 md:flex md:flex-1 md:flex-col">{visibleNav.map(item=>{const Icon=item.icon;return <button key={item.id} onClick={()=>{setSection(item.id);setSearch("");setMessage("");setDataError("");}} className={`flex min-w-0 items-center gap-2 rounded-lg px-3 py-2.5 text-left text-sm transition-colors ${section===item.id?"bg-[var(--sidebar-accent)] font-semibold text-[var(--sidebar-accent-foreground)]":"text-[var(--sidebar-foreground)]/75 hover:bg-[var(--sidebar-accent)]"}`}><Icon className="h-4 w-4 shrink-0"/><span className="min-w-0 break-words leading-tight">{item.label}</span></button>;})}</nav>
+      <nav aria-label="Navegação principal" className="grid grid-cols-2 gap-1 p-3 sm:grid-cols-3 md:flex md:flex-1 md:flex-col">{visibleNav.map(item=>{const Icon=item.icon;return <button key={item.id} onClick={()=>{setSection(item.id);setSearch("");setMessage("");setDataError("");}} className={`flex min-h-[3.25rem] min-w-0 items-start gap-2 rounded-lg px-3 py-3 text-left text-sm transition-colors ${section===item.id?"bg-[var(--sidebar-accent)] font-semibold text-[var(--sidebar-accent-foreground)]":"text-[var(--sidebar-foreground)]/75 hover:bg-[var(--sidebar-accent)]"}`}><Icon className="mt-0.5 h-4 w-4 shrink-0"/><span className="min-w-0 whitespace-normal break-words leading-snug [overflow-wrap:anywhere]">{item.label}</span></button>;})}</nav>
       <div className="hidden border-t border-[var(--sidebar-border)] p-4 text-xs text-[var(--sidebar-muted)] md:block">Protótipo acadêmico · armaZen</div>
     </aside>
     <main className="min-w-0 w-full max-w-full flex-1 md:ml-64">
-      <header className="flex min-w-0 flex-wrap items-center justify-between gap-3 border-b bg-card px-3 py-4 sm:px-8"><div className="min-w-0 flex-1"><p className="break-words text-xs font-medium uppercase tracking-wider text-muted-foreground">Operação / {active?.label}</p><h1 className="mt-1 break-words text-xl font-semibold">{section==="dashboard"?"Visão geral da operação":active?.label}</h1></div><div className="flex max-w-full items-center gap-3"><div className="min-w-0 text-right"><p className="break-words text-sm font-medium">{orgName||"Organização não identificada"}</p><p className="text-xs text-muted-foreground">{roleLabel}</p></div><button onClick={()=>void supabase.auth.signOut()} className="h-9 shrink-0 rounded-lg border px-3 text-xs font-medium text-muted-foreground hover:bg-muted" title="Sair">Sair</button></div></header>
+      <header className="flex min-w-0 flex-col items-start gap-3 border-b bg-card px-3 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-8">
+        <div className="min-w-0 w-full sm:flex-1">
+          <p className="break-words text-[10px] font-semibold uppercase tracking-wider text-muted-foreground sm:text-xs">Operação / {active?.label}</p>
+          <h1 className="mt-1 w-full max-w-full whitespace-normal break-words text-xl font-semibold leading-tight [overflow-wrap:anywhere] sm:text-xl">{section==="dashboard"?"Visão geral da operação":active?.label}</h1>
+        </div>
+        <div className="flex w-full max-w-full items-center justify-between gap-3 sm:w-auto sm:justify-end">
+          <div className="min-w-0 text-left sm:text-right">
+            <p className="break-words text-sm font-medium [overflow-wrap:anywhere]">{orgName||"Organização não identificada"}</p>
+            <p className="text-xs text-muted-foreground">{roleLabel}</p>
+          </div>
+          <button onClick={()=>void supabase.auth.signOut()} className="h-9 shrink-0 rounded-lg border px-3 text-xs font-medium text-muted-foreground hover:bg-muted" title="Sair">Sair</button>
+        </div>
+      </header>
       <div className="min-w-0 w-full max-w-full space-y-4 px-3 py-4 sm:p-8">
         {message&&<div role="status" className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3 text-sm">{message}</div>}
         {dataError&&<div role="alert" className="flex items-start gap-3 rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm"><AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-destructive"/><div className="flex-1">{dataError}</div><button onClick={()=>{setDataError("");refresh();}} className="font-medium underline">Tentar novamente</button></div>}

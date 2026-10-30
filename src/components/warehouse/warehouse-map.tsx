@@ -489,12 +489,12 @@ export function WarehouseMap({
     const dimmed = !directMatch(location) && normalizedQuery.length > 0;
     const nodeClass =
       location.status === "bloqueado"
-        ? "border-red-300 bg-red-50/70 dark:border-red-900 dark:bg-red-950/20"
+        ? "border-red-400 bg-red-50 dark:border-red-800 dark:bg-red-950/35"
         : location.status === "reservado"
-          ? "border-amber-300 bg-amber-50/70 dark:border-amber-900 dark:bg-amber-950/20"
+          ? "border-amber-400 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/35"
           : directBalances.length
-            ? "border-blue-300 bg-blue-50/60 dark:border-blue-900 dark:bg-blue-950/20"
-            : "border-emerald-300 bg-emerald-50/50 dark:border-emerald-900 dark:bg-emerald-950/20";
+            ? "border-blue-400 bg-blue-50 dark:border-blue-800 dark:bg-blue-950/35"
+            : "border-emerald-400 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950/35";
     const selectedClass = isSelected ? "ring-2 ring-primary ring-offset-2 border-primary" : "";
     const lowStockClass = isLowStock(location.id) ? "border-amber-500" : "";
 
@@ -518,7 +518,7 @@ export function WarehouseMap({
       >
         <div
           className={
-            "rounded-xl border p-3 shadow-sm transition-all " +
+            "rounded-xl border-2 p-3 shadow-sm transition-all hover:shadow-md " +
             nodeClass +
             " " +
             selectedClass +
@@ -601,7 +601,7 @@ export function WarehouseMap({
           )}
         </div>
         {hasChildren && !isCollapsed && depth < 20 && (
-          <div className="ml-3 mt-3 min-w-0 w-full border-l-2 border-dashed border-border pl-3">
+          <div className="ml-2 mt-3 min-w-0 w-full rounded-lg border border-dashed border-slate-300 bg-slate-50/80 p-2 sm:ml-3 sm:p-3 dark:border-slate-700 dark:bg-slate-900/25">
             <div className="mb-2 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
               <Layers3 className="h-3 w-3" />
               Subendereços ({children.length})
@@ -633,11 +633,11 @@ export function WarehouseMap({
       Math.max(0, ...[...positions.values()].map((position) => position.y)) + 1;
 
     return (
-      <div className="grid min-w-0 w-full grid-cols-1 items-start gap-2 sm:grid-cols-2">
+      <div className="grid min-w-0 w-full grid-cols-1 items-start gap-3 sm:grid-cols-2">
         {visibleSiblings.map((location) => renderLocationNode(location, depth))}
 
         {editMode && canManage && (
-          <div className="col-span-full grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2">
+          <div className="col-span-full grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
             {Array.from({ length: GRID_COLUMNS }, (_, index) => index + 1).map((x) => (
               <div
                 key={"drop-" + String(parentId ?? "root") + "-" + x}
