@@ -713,9 +713,10 @@ export function WarehouseMap({
               className="h-10 w-full rounded-lg border border-input bg-background pl-9 pr-3"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Código, descrição ou endereço..."
+              placeholder="Código, descrição, barras ou endereço..."
             />
           </span>
+          <p className="text-[11px] text-muted-foreground">Leitores de código configurados como teclado também podem preencher este campo.</p>
         </label>
       </div>
 

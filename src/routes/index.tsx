@@ -604,7 +604,7 @@ function Index() {
     </Panel>
     <Panel title="Materiais e saldos" description="Pesquise por código, descrição, categoria ou código de barras.">
       <div className="grid gap-3 md:grid-cols-3">
-        <div className="flex gap-2"><Search className="mt-2.5 h-4 w-4 shrink-0 text-muted-foreground"/><input className="h-10 w-full rounded-lg border bg-background px-3 text-sm" placeholder="Código, descrição ou barras..." value={search} onChange={e=>setSearch(e.target.value)}/></div>
+        <div className="min-w-0"><div className="flex gap-2"><Search className="mt-2.5 h-4 w-4 shrink-0 text-muted-foreground"/><input className="h-10 w-full min-w-0 rounded-lg border bg-background px-3 text-sm" placeholder="Código, descrição ou barras..." value={search} onChange={e=>setSearch(e.target.value)}/></div><p className="mt-1 text-[11px] text-muted-foreground">Compatível com leitor físico configurado como teclado.</p></div>
         <SelectField label="Situação" value={materialFilters.status} onChange={value=>setMaterialFilters(current=>({...current,status:value}))} options={[{value:"todos",label:"Todas as situações"},{value:"ativo",label:"Ativos"},{value:"inativo",label:"Inativos"}]}/>
         <SelectField label="Nível de estoque" value={materialFilters.stock} onChange={value=>setMaterialFilters(current=>({...current,stock:value}))} options={[{value:"todos",label:"Todos os níveis"},{value:"baixo",label:"Abaixo do mínimo"},{value:"normal",label:"No mínimo ou acima"}]}/>
       </div>
