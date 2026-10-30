@@ -1,5 +1,9 @@
 import { useMemo, useState, type ReactNode } from "react";
 import {
+  ArrowDown,
+  ArrowLeft,
+  ArrowRight,
+  ArrowUp,
   ChevronDown,
   ChevronRight,
   ClipboardList,
@@ -59,6 +63,7 @@ type MaterialItem = {
   code: string;
   description: string;
   unit: string;
+  barcode?: string | null;
   min_stock?: number | string | null;
 };
 
@@ -323,7 +328,7 @@ export function WarehouseMap({
     const materialMatch = getLocationBalances(location.id).some((balance) => {
       const material = materialsById.get(balance.material_id);
       return material
-        ? (material.code + " " + material.description).toLocaleLowerCase("pt-BR").includes(normalizedQuery)
+        ? (material.code + " " + material.description + " " + (material.barcode ?? "")).toLocaleLowerCase("pt-BR").includes(normalizedQuery)
         : false;
     });
     const searchMatch =
@@ -355,6 +360,9 @@ export function WarehouseMap({
 
   const matchesCount = warehouseLocations.filter((location) => directMatch(location)).length;
   const selectedLocation = locationsById.get(selectedLocationId);
+  const selectedPosition = selectedLocation
+    ? positionsByParent.get(selectedLocation.parent_id ?? null)?.get(selectedLocation.id)
+    : undefined;
   const selectedBalances = selectedLocation ? getLocationBalances(selectedLocation.id) : [];
   const selectedUnitTotals = selectedLocation ? getUnitTotals(selectedLocation.id) : new Map<string, number>();
   const selectedCapacityUnit = String(selectedLocation?.capacity_unit ?? "").trim().toLowerCase();
@@ -365,7 +373,7 @@ export function WarehouseMap({
           [...selectedUnitTotals.keys()][0]?.toLowerCase() === selectedCapacityUnit)),
   );
   const selectedQuantity =
-    selectedUnitTotals.size === 1 ? [...selectedUnitTotals.values()][0] : 0;
+    selectedUnitTotals.size === 1 ? ([...selectedUnitTotals.values()][0] ?? 0) : 0;
   const selectedOccupancy =
     selectedLocation?.capacity && capacityCompatible
       ? Math.min(100, Math.round((selectedQuantity / Number(selectedLocation.capacity)) * 100))
@@ -834,6 +842,26 @@ export function WarehouseMap({
             </button>
           </div>
 
+          {editMode && canManage && selectedPosition && (
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-primary/30 bg-primary/5 p-3">
+              <div>
+                <p className="text-xs font-semibold">Ajustar posição do endereço</p>
+                <p className="text-[10px] text-muted-foreground">Coluna {selectedPosition.x} · Linha {selectedPosition.y}. Use as setas para mover também em dispositivos sem arrastar.</p>
+              </div>
+              <div className="grid grid-cols-3 gap-1">
+                <span />
+                <button type="button" className="rounded-md border bg-background p-2" aria-label="Mover para cima" disabled={saving} onClick={() => moveSelected(0, -1)}><ArrowUp className="h-4 w-4" /></button>
+                <span />
+                <button type="button" className="rounded-md border bg-background p-2" aria-label="Mover para a esquerda" disabled={saving} onClick={() => moveSelected(-1, 0)}><ArrowLeft className="h-4 w-4" /></button>
+                <span className="flex items-center justify-center text-[10px] text-muted-foreground">Mover</span>
+                <button type="button" className="rounded-md border bg-background p-2" aria-label="Mover para a direita" disabled={saving} onClick={() => moveSelected(1, 0)}><ArrowRight className="h-4 w-4" /></button>
+                <span />
+                <button type="button" className="rounded-md border bg-background p-2" aria-label="Mover para baixo" disabled={saving} onClick={() => moveSelected(0, 1)}><ArrowDown className="h-4 w-4" /></button>
+                <span />
+              </div>
+            </div>
+          )}
+
           <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
             <div className="rounded-lg bg-muted/40 p-3">
               <p className="text-xs text-muted-foreground">Situação</p>
@@ -876,6 +904,7 @@ export function WarehouseMap({
                         <th className="p-2">Lote</th>
                         <th className="p-2">Quantidade</th>
                         <th className="p-2">Unidade</th>
+                        <th className="p-2">Validade</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y">
@@ -890,6 +919,7 @@ export function WarehouseMap({
                             <td className="p-2">{balance.lot || "—"}</td>
                             <td className="p-2 tabular-nums">{formatQuantity(Number(balance.quantity || 0))}</td>
                             <td className="p-2">{material?.unit ?? "—"}</td>
+                            <td className="p-2">{balance.expiry_date ? new Date(balance.expiry_date + "T12:00:00").toLocaleDateString("pt-BR") : "—"}</td>
                           </tr>
                         );
                       })}
