@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   ArrowDown,
   ArrowLeft,
@@ -199,6 +199,7 @@ export function WarehouseMap({
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
+  const dragPointerRef = useRef<{ locationId: string; clientX: number; clientY: number } | null>(null);
   const [mapError, setMapError] = useState("");
 
   const activeWarehouses = useMemo(
@@ -230,6 +231,37 @@ export function WarehouseMap({
     () => new Map(warehouseLocations.map((location) => [location.id, location])),
     [warehouseLocations],
   );
+  useEffect(() => {
+    if (!draggedId || !dragPointerRef.current) return;
+    let frame = 0;
+    const refreshDropTarget = () => {
+      if (frame) window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        const pointer = dragPointerRef.current;
+        if (!pointer) return;
+        const source = locationsById.get(pointer.locationId);
+        const targetElement = document.elementFromPoint(pointer.clientX, pointer.clientY)
+          ?.closest<HTMLElement>("[data-location-id]");
+        const targetId = targetElement?.dataset.locationId;
+        const target = targetId ? locationsById.get(targetId) : undefined;
+        setDropTargetId(
+          source && target && target.id !== source.id && target.parent_id === source.parent_id
+            ? target.id
+            : null,
+        );
+      });
+    };
+    // Wheel scrolling remains native; this listener only recalculates the drop target
+    // after the page or its scrollable ancestor has moved under the held pointer.
+    window.addEventListener("wheel", refreshDropTarget, { passive: true });
+    window.addEventListener("scroll", refreshDropTarget, true);
+    return () => {
+      window.removeEventListener("wheel", refreshDropTarget);
+      window.removeEventListener("scroll", refreshDropTarget, true);
+      if (frame) window.cancelAnimationFrame(frame);
+    };
+  }, [draggedId, locationsById]);
+
 
   const childrenByParent = useMemo(() => {
     const result = new Map<string | null, LocationItem[]>();
@@ -564,6 +596,7 @@ export function WarehouseMap({
         key={location.id}
         draggable={editMode && canManage && !saving}
         onDragStart={(event) => {
+          event.stopPropagation();
           if (!editMode || !canManage) return;
           setDraggedId(location.id);
           event.dataTransfer.setData("text/plain", location.id);
@@ -641,29 +674,27 @@ export function WarehouseMap({
                 title="Segure e arraste para outro endereço do mesmo grupo"
                 aria-label={"Arrastar endereço " + location.code}
                 onPointerDown={(event) => {
-                  if (event.pointerType === "mouse") return;
                   event.preventDefault();
                   event.stopPropagation();
                   event.currentTarget.setPointerCapture(event.pointerId);
+                  dragPointerRef.current = { locationId: location.id, clientX: event.clientX, clientY: event.clientY };
                   setDraggedId(location.id);
                   setDropTargetId(null);
                 }}
                 onPointerMove={(event) => {
-                  if (draggedId !== location.id) return;
+                  if (dragPointerRef.current?.locationId !== location.id) return;
+                  dragPointerRef.current = { locationId: location.id, clientX: event.clientX, clientY: event.clientY };
                   const targetElement = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>("[data-location-id]");
                   const targetId = targetElement?.dataset.locationId;
                   const target = targetId ? locationsById.get(targetId) : undefined;
-                  if (target && target.id !== location.id && target.parent_id === location.parent_id) {
-                    setDropTargetId(target.id);
-                  } else {
-                    setDropTargetId(null);
-                  }
+                  setDropTargetId(target && target.id !== location.id && target.parent_id === location.parent_id ? target.id : null);
                 }}
                 onPointerUp={(event) => {
-                  if (draggedId !== location.id) return;
+                  if (dragPointerRef.current?.locationId !== location.id) return;
                   const targetElement = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>("[data-location-id]");
                   const targetId = targetElement?.dataset.locationId;
                   const target = targetId ? locationsById.get(targetId) : undefined;
+                  dragPointerRef.current = null;
                   setDraggedId(null);
                   setDropTargetId(null);
                   if (target && target.id !== location.id && target.parent_id === location.parent_id) {
@@ -671,6 +702,7 @@ export function WarehouseMap({
                   }
                 }}
                 onPointerCancel={() => {
+                  dragPointerRef.current = null;
                   setDraggedId(null);
                   setDropTargetId(null);
                 }}
