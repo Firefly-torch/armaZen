@@ -591,6 +591,8 @@ export function WarehouseMap({
           setDraggedId(null);
           setDropTargetId(null);
         }}
+        data-location-id={location.id}
+        data-parent-id={location.parent_id ?? ""}
         className="min-w-0 w-full"
         style={{
           // Structural nodes occupy the full width of their branch grid.
@@ -632,6 +634,50 @@ export function WarehouseMap({
                 </span>
               </span>
             </button>
+            {editMode && canManage && (
+              <button
+                type="button"
+                className="touch-none shrink-0 rounded-md border bg-background/80 p-1.5 text-primary"
+                title="Segure e arraste para outro endereço do mesmo grupo"
+                aria-label={"Arrastar endereço " + location.code}
+                onPointerDown={(event) => {
+                  if (event.pointerType === "mouse") return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  event.currentTarget.setPointerCapture(event.pointerId);
+                  setDraggedId(location.id);
+                  setDropTargetId(null);
+                }}
+                onPointerMove={(event) => {
+                  if (draggedId !== location.id) return;
+                  const targetElement = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>("[data-location-id]");
+                  const targetId = targetElement?.dataset.locationId;
+                  const target = targetId ? locationsById.get(targetId) : undefined;
+                  if (target && target.id !== location.id && target.parent_id === location.parent_id) {
+                    setDropTargetId(target.id);
+                  } else {
+                    setDropTargetId(null);
+                  }
+                }}
+                onPointerUp={(event) => {
+                  if (draggedId !== location.id) return;
+                  const targetElement = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>("[data-location-id]");
+                  const targetId = targetElement?.dataset.locationId;
+                  const target = targetId ? locationsById.get(targetId) : undefined;
+                  setDraggedId(null);
+                  setDropTargetId(null);
+                  if (target && target.id !== location.id && target.parent_id === location.parent_id) {
+                    void swapLocations(location.id, target.id);
+                  }
+                }}
+                onPointerCancel={() => {
+                  setDraggedId(null);
+                  setDropTargetId(null);
+                }}
+              >
+                <Move className="h-4 w-4" />
+              </button>
+            )}
             {hasChildren && (
               <button
                 type="button"

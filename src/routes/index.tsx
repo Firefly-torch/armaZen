@@ -792,7 +792,7 @@ function Index() {
 
   const tasksSection = <div className="space-y-5">
     <Panel title={taskForm.id?"Editar tarefa":"Criar tarefa operacional"} description="Alterar o status da tarefa não movimenta estoque. A operação física deve ser registrada no módulo Movimentações.">
-      {canOperate?<form className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3" onSubmit={e=>{e.preventDefault();void runSave(async()=>{const p={org_id:orgId,title:taskForm.title.trim(),description:taskForm.description.trim()||null,type:taskForm.type,priority:taskForm.priority,status:taskForm.status,assignee_id:taskForm.assignee_id||null,due_at:taskForm.due_at?new Date(taskForm.due_at).toISOString():null,material_id:taskForm.material_id||null,location_id:taskForm.location_id||null,updated_at:new Date().toISOString(),completed_at:taskForm.status==="concluida"?new Date().toISOString():null,...(!taskForm.id?{created_by:user?.id}:{})};const q=taskForm.id?db.from("tasks").update(p).eq("id",taskForm.id):db.from("tasks").insert(p);const {error}=await q;if(error)throw error;setTaskForm({id:"",title:"",description:"",type:"recebimento",priority:"media",status:"a_fazer",assignee_id:"",due_at:"",material_id:"",location_id:""});},"Tarefa salva.");}}><Field label="Título" value={taskForm.title} onChange={v=>setTaskForm({...taskForm,title:v})} required/><SelectField label="Tipo de tarefa" value={taskForm.type} onChange={v=>setTaskForm({...taskForm,type:v})} options={taskTypes.map(v=>({value:v,label:v.replaceAll("_"," ")}))} required/><SelectField label="Prioridade" value={taskForm.priority} onChange={v=>setTaskForm({...taskForm,priority:v})} options={priorities.map(v=>({value:v,label:v}))} required/><SelectField label="Status" value={taskForm.status} onChange={v=>setTaskForm({...taskForm,status:v})} options={taskStatuses.map(v=>({value:v,label:v.replaceAll("_"," ")}))} required/><Field label="Prazo" type="datetime-local" value={taskForm.due_at} onChange={v=>setTaskForm({...taskForm,due_at:v})}/><SelectField label="Responsável (membro)" value={taskForm.assignee_id} onChange={v=>setTaskForm({...taskForm,assignee_id:v})} options={members.map(m=>({value:m.user_id,label:m.profiles?.full_name||m.profiles?.email||m.user_id.slice(0,8)}))}/><SelectField label="Material relacionado" value={taskForm.material_id} onChange={v=>setTaskForm({...taskForm,material_id:v})} options={materials.map(m=>({value:m.id,label:`${m.code} — ${m.description}`}))}/><SelectField label="Endereço relacionado" value={taskForm.location_id} onChange={v=>setTaskForm({...taskForm,location_id:v})} options={locations.map(l=>({value:l.id,label:`${l.code} — ${l.name}`}))}/><label className="grid gap-1.5 text-sm sm:col-span-2"><span className="font-medium">Descrição</span><textarea className="min-h-20 rounded-lg border bg-background p-3" value={taskForm.description} onChange={e=>setTaskForm({...taskForm,description:e.target.value})}/></label><div className="flex items-end gap-2"><button disabled={saving} className="h-10 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground">{taskForm.id?"Salvar alterações":"Criar tarefa"}</button>{taskForm.id&&<button type="button" className="h-10 rounded-lg border px-3 text-sm" onClick={()=>setTaskForm({id:"",title:"",description:"",type:"recebimento",priority:"media",status:"a_fazer",assignee_id:"",due_at:"",material_id:"",location_id:""})}>Cancelar</button>}</div></form>:<Empty>O perfil atual não possui permissão para criar ou atualizar tarefas.</Empty>}
+      {canOperate?<form className="grid gap-3 rounded-xl border bg-muted/20 p-3 shadow-sm sm:grid-cols-2 sm:p-4 xl:grid-cols-3" onSubmit={e=>{e.preventDefault();void runSave(async()=>{const p={org_id:orgId,title:taskForm.title.trim(),description:taskForm.description.trim()||null,type:taskForm.type,priority:taskForm.priority,status:taskForm.status,assignee_id:taskForm.assignee_id||null,due_at:taskForm.due_at?new Date(taskForm.due_at).toISOString():null,material_id:taskForm.material_id||null,location_id:taskForm.location_id||null,updated_at:new Date().toISOString(),completed_at:taskForm.status==="concluida"?new Date().toISOString():null,...(!taskForm.id?{created_by:user?.id}:{})};const q=taskForm.id?db.from("tasks").update(p).eq("id",taskForm.id):db.from("tasks").insert(p);const {error}=await q;if(error)throw error;setTaskForm({id:"",title:"",description:"",type:"recebimento",priority:"media",status:"a_fazer",assignee_id:"",due_at:"",material_id:"",location_id:""});},"Tarefa salva.");}}><Field label="Título" value={taskForm.title} onChange={v=>setTaskForm({...taskForm,title:v})} required/><SelectField label="Tipo de tarefa" value={taskForm.type} onChange={v=>setTaskForm({...taskForm,type:v})} options={taskTypes.map(v=>({value:v,label:v.replaceAll("_"," ")}))} required/><SelectField label="Prioridade" value={taskForm.priority} onChange={v=>setTaskForm({...taskForm,priority:v})} options={priorities.map(v=>({value:v,label:v}))} required/><SelectField label="Status" value={taskForm.status} onChange={v=>setTaskForm({...taskForm,status:v})} options={taskStatuses.map(v=>({value:v,label:v.replaceAll("_"," ")}))} required/><Field label="Prazo" type="datetime-local" value={taskForm.due_at} onChange={v=>setTaskForm({...taskForm,due_at:v})}/><SelectField label="Responsável (membro)" value={taskForm.assignee_id} onChange={v=>setTaskForm({...taskForm,assignee_id:v})} options={members.map(m=>({value:m.user_id,label:m.profiles?.full_name||m.profiles?.email||m.user_id.slice(0,8)}))}/><div className="border-t pt-3 sm:col-span-2 xl:col-span-3"><p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Vínculos operacionais</p><p className="mt-0.5 text-[11px] text-muted-foreground">Associe a tarefa a um material e endereço para exibir esses dados no Kanban e no mapa.</p></div><SelectField label="Material relacionado" value={taskForm.material_id} onChange={v=>setTaskForm({...taskForm,material_id:v})} options={materials.map(m=>({value:m.id,label:`${m.code} — ${m.description}`}))}/><SelectField label="Endereço relacionado" value={taskForm.location_id} onChange={v=>setTaskForm({...taskForm,location_id:v})} options={locations.map(l=>({value:l.id,label:`${l.code} — ${l.name}`}))}/><label className="grid gap-1.5 text-sm sm:col-span-2 xl:col-span-3"><span className="font-medium">Descrição</span><textarea className="min-h-20 rounded-lg border bg-background p-3" value={taskForm.description} onChange={e=>setTaskForm({...taskForm,description:e.target.value})}/></label><div className="flex items-end gap-2"><button disabled={saving} className="h-10 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground">{taskForm.id?"Salvar alterações":"Criar tarefa"}</button>{taskForm.id&&<button type="button" className="h-10 rounded-lg border px-3 text-sm" onClick={()=>setTaskForm({id:"",title:"",description:"",type:"recebimento",priority:"media",status:"a_fazer",assignee_id:"",due_at:"",material_id:"",location_id:""})}>Cancelar</button>}</div></form>:<Empty>O perfil atual não possui permissão para criar ou atualizar tarefas.</Empty>}
     </Panel>
     <Panel title="Quadro Kanban" description="Acompanhe atividades por etapa. Arraste um cartão para outra coluna para atualizar o status; no celular, use o seletor do próprio cartão.">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -805,7 +805,7 @@ function Index() {
             onChange={(event) => setSearch(event.target.value)}
           />
         </div>
-        <p className="text-xs text-muted-foreground">Dica: arraste pelo cartão no computador ou altere a etapa pelo seletor.</p>
+        <p className="text-xs text-muted-foreground">Dica: arraste o cartão no computador; no celular, segure a alça ou use o seletor de etapa.</p>
       </div>
 
       <div className="grid min-w-0 grid-cols-1 gap-3 md:grid-cols-2 2xl:grid-cols-4">
@@ -816,6 +816,7 @@ function Index() {
           return (
             <section
               key={status}
+              data-kanban-status={status}
               className={
                 "min-w-0 rounded-2xl border-2 p-3 transition-all " +
                 meta.column +
@@ -891,7 +892,41 @@ function Index() {
                       }
                     >
                       <div className="flex min-w-0 items-start gap-2">
-                        {canOperate && <GripVertical className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />}
+                        {canOperate && (
+                          <button
+                            type="button"
+                            className="touch-none mt-0.5 h-8 w-8 shrink-0 rounded-md border bg-muted/60 p-1.5 text-muted-foreground active:bg-primary/10 active:text-primary"
+                            title="Segure e arraste para outra etapa"
+                            aria-label={"Arrastar tarefa " + task.title + " para outra etapa"}
+                            onPointerDown={(event) => {
+                              if (event.pointerType === "mouse") return;
+                              event.preventDefault();
+                              event.stopPropagation();
+                              event.currentTarget.setPointerCapture(event.pointerId);
+                              setDraggedTaskId(task.id);
+                              setDragOverTaskStatus(null);
+                            }}
+                            onPointerMove={(event) => {
+                              if (draggedTaskId !== task.id) return;
+                              const targetLane = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>("[data-kanban-status]");
+                              setDragOverTaskStatus(targetLane?.dataset.kanbanStatus ?? null);
+                            }}
+                            onPointerUp={(event) => {
+                              if (draggedTaskId !== task.id) return;
+                              const targetLane = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>("[data-kanban-status]");
+                              const nextStatus = targetLane?.dataset.kanbanStatus;
+                              setDraggedTaskId(null);
+                              setDragOverTaskStatus(null);
+                              if (nextStatus) updateTaskStatus(task.id, nextStatus);
+                            }}
+                            onPointerCancel={() => {
+                              setDraggedTaskId(null);
+                              setDragOverTaskStatus(null);
+                            }}
+                          >
+                            <GripVertical className="h-4 w-4" />
+                          </button>
+                        )}
                         <div className="min-w-0 flex-1">
                           <h4 className="break-words text-sm font-semibold leading-snug">{task.title}</h4>
                           <div className="mt-2 flex flex-wrap gap-1.5">
