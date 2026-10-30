@@ -111,7 +111,7 @@ type WarehouseMapProps = {
   onOpenMovements: () => void;
 };
 
-const GRID_COLUMNS = 4;
+const GRID_COLUMNS = 2;
 
 function formatQuantity(value: number): string {
   return new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 2 }).format(value);
@@ -472,10 +472,11 @@ export function WarehouseMap({
           event.dataTransfer.effectAllowed = "move";
         }}
         onDragEnd={() => setDraggedId(null)}
-        className="min-w-0"
+        className="min-w-0 w-full"
         style={{
-          gridColumnStart: position?.x ?? 1,
-          gridRowStart: position?.y ?? 1,
+          // Structural nodes occupy the full width of their branch grid.
+          // Let CSS auto-placement create rows instead of pinning nested rows.
+          gridColumn: depth > 0 && hasChildren ? "1 / -1" : undefined,
         }}
       >
         <div
@@ -549,7 +550,7 @@ export function WarehouseMap({
           )}
         </div>
         {hasChildren && !isCollapsed && depth < 20 && (
-          <div className="ml-3 mt-3 border-l-2 border-dashed border-border pl-3">
+          <div className="ml-3 mt-3 min-w-0 w-full border-l-2 border-dashed border-border pl-3">
             <div className="mb-2 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
               <Layers3 className="h-3 w-3" />
               Subendereços ({children.length})
@@ -564,55 +565,53 @@ export function WarehouseMap({
   function renderBranchGrid(parentId: string | null, depth: number): ReactNode {
     const siblings = childrenByParent.get(parentId) ?? [];
     if (!siblings.length) return null;
+
     const positions = positionsByParent.get(parentId) ?? new Map<string, CellPosition>();
-    const visibleSiblingIds = new Set(siblings.filter((location) => branchMatches(location.id)).map((location) => location.id));
-    const occupiedRows = Math.max(1, ...[...positions.values()].map((position) => position.y));
-    const rows = occupiedRows + (editMode ? 1 : 0);
-    const cells: ReactNode[] = [];
-    for (let y = 1; y <= rows; y += 1) {
-      for (let x = 1; x <= GRID_COLUMNS; x += 1) {
-        const location = siblings.find((sibling) => {
-          const position = positions.get(sibling.id);
-          return position?.x === x && position?.y === y;
-        });
-        if (location) {
-          if (visibleSiblingIds.has(location.id)) {
-            cells.push(renderLocationNode(location, depth));
-          }
-        } else if (editMode && canManage) {
-          cells.push(
-            <div
-              key={"empty-" + String(parentId ?? "root") + "-" + x + "-" + y}
-              className="min-h-24 rounded-xl border border-dashed border-primary/40 bg-primary/[0.025]"
-              style={{ gridColumnStart: x, gridRowStart: y }}
-              onDragOver={(event) => {
-                event.preventDefault();
-                event.dataTransfer.dropEffect = "move";
-              }}
-              onDrop={(event) => {
-                event.preventDefault();
-                if (saving) return;
-                const locationId = event.dataTransfer.getData("text/plain") || draggedId;
-                setDraggedId(null);
-                if (!locationId) return;
-                void changePosition(locationId, parentId, x, y);
-              }}
-            >
-              <div className="flex h-full min-h-24 items-center justify-center gap-1 p-2 text-center text-[10px] text-muted-foreground">
-                <Move className="h-3 w-3" />
-                Soltar aqui
-              </div>
-            </div>,
-          );
-        }
-      }
-    }
+    const visibleSiblings = [...siblings]
+      .filter((location) => branchMatches(location.id))
+      .sort((a, b) => {
+        const positionA = positions.get(a.id);
+        const positionB = positions.get(b.id);
+        return (
+          (positionA?.y ?? 1) - (positionB?.y ?? 1) ||
+          (positionA?.x ?? 1) - (positionB?.x ?? 1) ||
+          a.code.localeCompare(b.code, "pt-BR", { numeric: true })
+        );
+      });
+    const nextRow =
+      Math.max(0, ...[...positions.values()].map((position) => position.y)) + 1;
+
     return (
-      <div
-        className="grid min-w-[680px] grid-cols-4 items-start gap-2"
-        style={{ gridAutoRows: "minmax(96px, auto)" }}
-      >
-        {cells}
+      <div className="grid min-w-0 w-full grid-cols-1 items-start gap-2 sm:grid-cols-2">
+        {visibleSiblings.map((location) => renderLocationNode(location, depth))}
+
+        {editMode && canManage && (
+          <div className="col-span-full grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2">
+            {Array.from({ length: GRID_COLUMNS }, (_, index) => index + 1).map((x) => (
+              <div
+                key={"drop-" + String(parentId ?? "root") + "-" + x}
+                className="min-h-20 min-w-0 rounded-xl border border-dashed border-primary/40 bg-primary/[0.025]"
+                onDragOver={(event) => {
+                  event.preventDefault();
+                  event.dataTransfer.dropEffect = "move";
+                }}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  if (saving) return;
+                  const locationId = event.dataTransfer.getData("text/plain") || draggedId;
+                  setDraggedId(null);
+                  if (!locationId) return;
+                  void changePosition(locationId, parentId, x, nextRow);
+                }}
+              >
+                <div className="flex min-h-20 items-center justify-center gap-1 p-2 text-center text-[10px] text-muted-foreground">
+                  <Move className="h-3 w-3" />
+                  Soltar para adicionar ao final
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     );
   }
@@ -756,7 +755,7 @@ export function WarehouseMap({
 
       {editMode && (
         <div className="mt-3 rounded-lg border border-primary/30 bg-primary/5 p-3 text-xs text-muted-foreground">
-          Arraste um endereço para uma célula vazia do mesmo nível hierárquico. A posição será salva nos campos visuais já existentes do endereço; os vínculos de estoque e movimentações não serão alterados.
+          Arraste um endereço para uma das áreas de inserção ao final do respectivo grupo. A posição será salva nos campos visuais já existentes do endereço; os vínculos de estoque e movimentações não serão alterados. A grade usa duas colunas em telas maiores e uma coluna em telas estreitas.
         </div>
       )}
       {mapError && (
@@ -801,9 +800,9 @@ export function WarehouseMap({
           Não existem endereços ativos cadastrados neste armazém.
         </div>
       ) : (
-        <div className="mt-4 max-h-[72vh] overflow-auto rounded-xl border bg-muted/10 p-3 sm:p-4">
+        <div className="mt-4 min-w-0 max-h-[72vh] overflow-auto rounded-xl border bg-muted/10 p-3 sm:p-4">
           <div
-            className="w-full origin-top-left"
+            className="min-w-0 w-full origin-top-left"
             style={{ zoom: zoom / 100 }}
           >
             {renderBranchGrid(null, 0)}
