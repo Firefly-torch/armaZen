@@ -54,7 +54,7 @@ O login demonstrativo não aceita e-mail ou senha arbitrários e não altera a s
 ## Módulos
 
 - **Dashboard:** indicadores do Supabase, filtro por armazém e período, estoque agrupado por unidade de medida, ocupação estimada de posições e tendência de movimentações.
-- **Armazém e endereçamento:** estrutura hierárquica configurável, pesquisa e mapa esquemático navegável com detalhes por endereço.
+- **Armazém e endereçamento:** estrutura hierárquica configurável, mapa geral com todos os níveis, pesquisa por material/endereço, filtros de situação, organização visual por Gestão e detalhes contextuais de saldo, movimentações e tarefas.
 - **Materiais e estoque:** cadastro, saldos por endereço, alertas de estoque mínimo e campos adicionais configuráveis.
 - **Movimentações:** entradas, saídas, transferências, ajustes e estornos por funções transacionais do banco.
 - **Inventário:** sessões de contagem, quantidade esperada e contada, divergências e histórico. Uma sessão concluída não aceita novas contagens.
