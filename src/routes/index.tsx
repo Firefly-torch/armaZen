@@ -94,7 +94,7 @@ function Table({ headers, rows, pageSize = 10 }: { headers: string[]; rows: Reac
     <div className="hidden min-w-0 max-w-full overflow-x-auto rounded-lg border sm:block">
       <table className="w-full min-w-[640px] text-left text-sm">
         <thead className="bg-muted/60 text-xs uppercase text-muted-foreground"><tr>{headers.map(h => <th key={h} className="px-3 py-3 font-semibold">{h}</th>)}</tr></thead>
-        <tbody className="divide-y">{visibleRows.map((row, i) => <tr key={currentPage * pageSize + i} className="hover:bg-muted/30">{row.map((cell, j) => <td key={j} className="max-w-[22rem] px-3 py-3 align-middle"><div className="min-w-0 break-words [overflow-wrap:anywhere]">{cell}</div></td>)}</tr>)}</tbody>
+        <tbody className="divide-y divide-slate-200 dark:divide-slate-700">{visibleRows.map((row, i) => <tr key={currentPage * pageSize + i} className="odd:bg-white even:bg-slate-50/80 hover:bg-primary/5 dark:odd:bg-slate-950/30 dark:even:bg-slate-900/40">{row.map((cell, j) => <td key={j} className="max-w-[22rem] px-3 py-3 align-middle"><div className="min-w-0 break-words [overflow-wrap:anywhere]">{cell}</div></td>)}</tr>)}</tbody>
       </table>
     </div>
     <div className="grid min-w-0 gap-3 sm:hidden">

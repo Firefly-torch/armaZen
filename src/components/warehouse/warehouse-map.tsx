@@ -601,7 +601,7 @@ export function WarehouseMap({
           )}
         </div>
         {hasChildren && !isCollapsed && depth < 20 && (
-          <div className="ml-2 mt-3 min-w-0 w-full rounded-lg border border-dashed border-slate-300 bg-slate-50/80 p-2 sm:ml-3 sm:p-3 dark:border-slate-700 dark:bg-slate-900/25">
+          <div className="mt-3 min-w-0 w-full rounded-lg border border-dashed border-slate-300 bg-slate-50/80 p-2 sm:p-3 dark:border-slate-700 dark:bg-slate-900/25">
             <div className="mb-2 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
               <Layers3 className="h-3 w-3" />
               Subendereços ({children.length})
