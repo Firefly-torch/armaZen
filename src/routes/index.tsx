@@ -79,7 +79,7 @@ function SelectField({ label, value, onChange, options, required = false }: {
   return <label className="grid gap-1.5 text-sm"><span className="font-medium">{label}</span><select className="h-10 w-full rounded-lg border border-input bg-background px-3 outline-none focus:ring-2 focus:ring-ring" value={value} required={required} onChange={(e) => onChange(e.target.value)}><option value="">Selecione...</option>{options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select></label>;
 }
 function Panel({ title, description, children, action }: { title: string; description?: string; children: ReactNode; action?: ReactNode }) {
-  return <section className="rounded-xl border bg-card p-5 shadow-sm"><div className="mb-4 flex flex-wrap items-start justify-between gap-3"><div><h2 className="font-semibold">{title}</h2>{description && <p className="mt-1 text-sm text-muted-foreground">{description}</p>}</div>{action}</div>{children}</section>;
+  return <section className="min-w-0 w-full max-w-full rounded-xl border bg-card p-3 shadow-sm sm:p-5"><div className="mb-4 flex min-w-0 flex-wrap items-start justify-between gap-3"><div className="min-w-0 flex-1"><h2 className="break-words font-semibold">{title}</h2>{description && <p className="mt-1 break-words text-sm text-muted-foreground">{description}</p>}</div>{action && <div className="max-w-full shrink-0">{action}</div>}</div>{children}</section>;
 }
 function Empty({ children = "Nenhum registro encontrado." }: { children?: ReactNode }) {
   return <p className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">{children}</p>;
@@ -90,16 +90,19 @@ function Table({ headers, rows, pageSize = 10 }: { headers: string[]; rows: Reac
   const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
   const currentPage = Math.min(page, pageCount - 1);
   const visibleRows = rows.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
-  return <div className="space-y-3">
-    <div className="hidden overflow-x-auto rounded-lg border sm:block">
+  return <div className="min-w-0 w-full max-w-full space-y-3">
+    <div className="hidden min-w-0 max-w-full overflow-x-auto rounded-lg border sm:block">
       <table className="w-full min-w-[640px] text-left text-sm">
         <thead className="bg-muted/60 text-xs uppercase text-muted-foreground"><tr>{headers.map(h => <th key={h} className="px-3 py-3 font-semibold">{h}</th>)}</tr></thead>
-        <tbody className="divide-y">{visibleRows.map((row, i) => <tr key={currentPage * pageSize + i} className="hover:bg-muted/30">{row.map((cell, j) => <td key={j} className="px-3 py-3 align-middle">{cell}</td>)}</tr>)}</tbody>
+        <tbody className="divide-y">{visibleRows.map((row, i) => <tr key={currentPage * pageSize + i} className="hover:bg-muted/30">{row.map((cell, j) => <td key={j} className="max-w-[22rem] px-3 py-3 align-middle"><div className="min-w-0 break-words [overflow-wrap:anywhere]">{cell}</div></td>)}</tr>)}</tbody>
       </table>
     </div>
-    <div className="grid gap-2 sm:hidden">
-      {visibleRows.map((row, i) => <article key={currentPage * pageSize + i} className="rounded-lg border bg-card p-3">
-        <dl className="grid gap-2">{row.map((cell, j) => <div key={j} className="grid grid-cols-[minmax(7rem,0.8fr)_minmax(0,1.2fr)] gap-3 border-b pb-2 last:border-0 last:pb-0"><dt className="text-xs font-medium text-muted-foreground">{headers[j]}</dt><dd className="min-w-0 break-words text-sm">{cell}</dd></div>)}</dl>
+    <div className="grid min-w-0 gap-2 sm:hidden">
+      {visibleRows.map((row, i) => <article key={currentPage * pageSize + i} className="min-w-0 overflow-hidden rounded-lg border bg-card p-3 shadow-sm">
+        <dl className="grid min-w-0 gap-2">{row.map((cell, j) => <div key={j} className="grid min-w-0 gap-1 rounded-md bg-muted/35 px-3 py-2">
+          <dt className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{headers[j]}</dt>
+          <dd className="min-w-0 break-words text-sm [overflow-wrap:anywhere] [&_div.flex]:flex-wrap">{cell}</dd>
+        </div>)}</dl>
       </article>)}
     </div>
     {rows.length > pageSize && <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
@@ -601,7 +604,7 @@ function Index() {
     </Panel>
     <Panel title="Materiais e saldos" description="Pesquise por código, descrição, categoria ou código de barras.">
       <div className="grid gap-3 md:grid-cols-3">
-        <div className="flex gap-2"><Search className="mt-2.5 h-4 w-4 shrink-0 text-muted-foreground"/><input className="h-10 w-full rounded-lg border bg-background px-3 text-sm" placeholder="Pesquisar código, descrição..." value={search} onChange={e=>setSearch(e.target.value)}/></div>
+        <div className="flex gap-2"><Search className="mt-2.5 h-4 w-4 shrink-0 text-muted-foreground"/><input className="h-10 w-full rounded-lg border bg-background px-3 text-sm" placeholder="Código, descrição ou barras..." value={search} onChange={e=>setSearch(e.target.value)}/></div>
         <SelectField label="Situação" value={materialFilters.status} onChange={value=>setMaterialFilters(current=>({...current,status:value}))} options={[{value:"todos",label:"Todas as situações"},{value:"ativo",label:"Ativos"},{value:"inativo",label:"Inativos"}]}/>
         <SelectField label="Nível de estoque" value={materialFilters.stock} onChange={value=>setMaterialFilters(current=>({...current,stock:value}))} options={[{value:"todos",label:"Todos os níveis"},{value:"baixo",label:"Abaixo do mínimo"},{value:"normal",label:"No mínimo ou acima"}]}/>
       </div>
@@ -736,15 +739,15 @@ function Index() {
   </div>;
 
   const active = visibleNav.find(n=>n.id===section);
-  return <div className="min-h-screen bg-background text-foreground md:flex">
-    <aside className="flex w-full flex-col border-b bg-[var(--sidebar)] text-[var(--sidebar-foreground)] md:fixed md:inset-y-0 md:w-64 md:border-b-0 md:border-r md:border-[var(--sidebar-border)]">
+  return <div className="min-h-screen w-full max-w-full overflow-x-clip bg-background text-foreground md:flex">
+    <aside className="flex min-w-0 w-full max-w-full flex-col border-b bg-[var(--sidebar)] text-[var(--sidebar-foreground)] md:fixed md:inset-y-0 md:w-64 md:border-b-0 md:border-r md:border-[var(--sidebar-border)]">
       <div className="flex items-center gap-3 border-b border-[var(--sidebar-border)] px-5 py-5"><div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary text-primary-foreground"><Warehouse className="h-5 w-5"/></div><div><p className="text-lg font-bold">armaZen</p><p className="text-xs text-[var(--sidebar-muted)]">Sistema de gestão de armazém</p></div></div>
-      <nav aria-label="Navegação principal" className="grid grid-cols-2 gap-1 p-3 sm:grid-cols-3 md:flex md:flex-1 md:flex-col">{visibleNav.map(item=>{const Icon=item.icon;return <button key={item.id} onClick={()=>{setSection(item.id);setSearch("");setMessage("");setDataError("");}} className={`flex items-center gap-2 rounded-lg px-3 py-2.5 text-left text-sm transition-colors ${section===item.id?"bg-[var(--sidebar-accent)] font-semibold text-[var(--sidebar-accent-foreground)]":"text-[var(--sidebar-foreground)]/75 hover:bg-[var(--sidebar-accent)]"}`}><Icon className="h-4 w-4 shrink-0"/><span>{item.label}</span></button>;})}</nav>
+      <nav aria-label="Navegação principal" className="grid grid-cols-2 gap-1 p-3 sm:grid-cols-3 md:flex md:flex-1 md:flex-col">{visibleNav.map(item=>{const Icon=item.icon;return <button key={item.id} onClick={()=>{setSection(item.id);setSearch("");setMessage("");setDataError("");}} className={`flex min-w-0 items-center gap-2 rounded-lg px-3 py-2.5 text-left text-sm transition-colors ${section===item.id?"bg-[var(--sidebar-accent)] font-semibold text-[var(--sidebar-accent-foreground)]":"text-[var(--sidebar-foreground)]/75 hover:bg-[var(--sidebar-accent)]"}`}><Icon className="h-4 w-4 shrink-0"/><span className="min-w-0 break-words leading-tight">{item.label}</span></button>;})}</nav>
       <div className="hidden border-t border-[var(--sidebar-border)] p-4 text-xs text-[var(--sidebar-muted)] md:block">Protótipo acadêmico · armaZen</div>
     </aside>
-    <main className="min-w-0 flex-1 md:ml-64">
-      <header className="flex flex-wrap items-center justify-between gap-3 border-b bg-card px-5 py-4 sm:px-8"><div><p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Operação / {active?.label}</p><h1 className="mt-1 text-xl font-semibold">{section==="dashboard"?"Visão geral da operação":active?.label}</h1></div><div className="flex items-center gap-4"><div className="text-right"><p className="text-sm font-medium">{orgName||"Organização não identificada"}</p><p className="text-xs text-muted-foreground">{roleLabel}</p></div><button onClick={()=>void supabase.auth.signOut()} className="h-9 rounded-lg border px-3 text-xs font-medium text-muted-foreground hover:bg-muted" title="Sair">Sair</button></div></header>
-      <div className="space-y-4 p-5 sm:p-8">
+    <main className="min-w-0 w-full max-w-full flex-1 md:ml-64">
+      <header className="flex min-w-0 flex-wrap items-center justify-between gap-3 border-b bg-card px-3 py-4 sm:px-8"><div className="min-w-0 flex-1"><p className="break-words text-xs font-medium uppercase tracking-wider text-muted-foreground">Operação / {active?.label}</p><h1 className="mt-1 break-words text-xl font-semibold">{section==="dashboard"?"Visão geral da operação":active?.label}</h1></div><div className="flex max-w-full items-center gap-3"><div className="min-w-0 text-right"><p className="break-words text-sm font-medium">{orgName||"Organização não identificada"}</p><p className="text-xs text-muted-foreground">{roleLabel}</p></div><button onClick={()=>void supabase.auth.signOut()} className="h-9 shrink-0 rounded-lg border px-3 text-xs font-medium text-muted-foreground hover:bg-muted" title="Sair">Sair</button></div></header>
+      <div className="min-w-0 w-full max-w-full space-y-4 px-3 py-4 sm:p-8">
         {message&&<div role="status" className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3 text-sm">{message}</div>}
         {dataError&&<div role="alert" className="flex items-start gap-3 rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm"><AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-destructive"/><div className="flex-1">{dataError}</div><button onClick={()=>{setDataError("");refresh();}} className="font-medium underline">Tentar novamente</button></div>}
         {loading&&<p className="text-sm text-muted-foreground">Atualizando dados do Supabase…</p>}

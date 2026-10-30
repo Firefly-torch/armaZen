@@ -90,7 +90,7 @@ type TaskItem = {
 };
 
 type CellPosition = { x: number; y: number };
-type StatusFilter = "todos" | "ocupados" | "vazios" | "bloqueados" | "reservados" | "estoque_baixo";
+type StatusFilter = "todos" | "ocupados" | "vazios" | "bloqueados" | "reservados" | "estoque_baixo" | "validade_vencida" | "validade_proxima";
 
 type WarehouseMapProps = {
   warehouses: WarehouseItem[];
@@ -133,6 +133,27 @@ function statusClass(status: string): string {
   if (status === "bloqueado") return "border-red-300 bg-red-50 text-red-800 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200";
   if (status === "reservado") return "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200";
   return "border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200";
+}
+
+function daysUntilExpiry(value: string | null | undefined): number | null {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const year = Number(value.slice(0, 4));
+  const month = Number(value.slice(5, 7));
+  const day = Number(value.slice(8, 10));
+  if (!year || month < 1 || month > 12 || day < 1 || day > 31) return null;
+  const expiryDay = Date.UTC(year, month - 1, day);
+  const now = new Date();
+  const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  return Math.round((expiryDay - today) / 86_400_000);
+}
+
+function expiryLabel(value: string | null | undefined): string {
+  const days = daysUntilExpiry(value);
+  if (days === null) return "Validade não informada";
+  if (days < 0) return `Vencido há ${Math.abs(days)} dia(s)`;
+  if (days === 0) return "Vence hoje";
+  if (days <= 30) return `Vence em ${days} dia(s)`;
+  return "Dentro da validade";
 }
 
 function movementLabel(type: string): string {
@@ -309,6 +330,17 @@ export function WarehouseMap({
       const material = materialsById.get(balance.material_id);
       return material && Number(totalByMaterial.get(material.id) ?? 0) < Number(material.min_stock ?? 0);
     });
+  const getExpiryCounts = (locationId: string) =>
+    getLocationBalances(locationId).reduce(
+      (counts, balance) => {
+        const days = daysUntilExpiry(balance.expiry_date);
+        if (days === null) return counts;
+        if (days < 0) counts.expired += 1;
+        else if (days <= 30) counts.near += 1;
+        return counts;
+      },
+      { expired: 0, near: 0 },
+    );
 
   const storageLocations = warehouseLocations.filter(
     (location) => levelsById.get(location.level_id)?.is_storage,
@@ -319,6 +351,8 @@ export function WarehouseMap({
   const blockedCount = storageLocations.filter((location) => location.status === "bloqueado").length;
   const reservedCount = storageLocations.filter((location) => location.status === "reservado").length;
   const lowStockCount = storageLocations.filter((location) => isLowStock(location.id)).length;
+  const expiredLocationCount = storageLocations.filter((location) => getExpiryCounts(location.id).expired > 0).length;
+  const nearExpiryLocationCount = storageLocations.filter((location) => getExpiryCounts(location.id).near > 0).length;
 
   const normalizedQuery = query.trim().toLocaleLowerCase("pt-BR");
   const directMatch = (location: LocationItem) => {
@@ -339,7 +373,9 @@ export function WarehouseMap({
       (statusFilter === "vazios" && getLocationBalances(location.id).length === 0) ||
       (statusFilter === "bloqueados" && location.status === "bloqueado") ||
       (statusFilter === "reservados" && location.status === "reservado") ||
-      (statusFilter === "estoque_baixo" && isLowStock(location.id));
+      (statusFilter === "estoque_baixo" && isLowStock(location.id)) ||
+      (statusFilter === "validade_vencida" && getExpiryCounts(location.id).expired > 0) ||
+      (statusFilter === "validade_proxima" && getExpiryCounts(location.id).near > 0);
     return searchMatch && statusMatch;
   };
 
@@ -448,6 +484,7 @@ export function WarehouseMap({
     const isCollapsed = collapsed.has(location.id);
     const position = positionsByParent.get(location.parent_id ?? null)?.get(location.id);
     const directBalances = getLocationBalances(location.id);
+    const expiryCounts = getExpiryCounts(location.id);
     const isSelected = selectedLocationId === location.id;
     const dimmed = !directMatch(location) && normalizedQuery.length > 0;
     const nodeClass =
@@ -541,6 +578,20 @@ export function WarehouseMap({
             <p className="mt-2 text-[11px] font-semibold text-amber-700 dark:text-amber-300">
               Estoque abaixo do mínimo
             </p>
+          )}
+          {(expiryCounts.expired > 0 || expiryCounts.near > 0) && (
+            <div className="mt-2 flex min-w-0 flex-wrap gap-1">
+              {expiryCounts.expired > 0 && (
+                <span className="max-w-full rounded-full border border-red-300 bg-red-50 px-2 py-0.5 text-[10px] font-semibold text-red-800 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200">
+                  {expiryCounts.expired} lote(s) vencido(s)
+                </span>
+              )}
+              {expiryCounts.near > 0 && (
+                <span className="max-w-full rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+                  {expiryCounts.near} vence(m) em até 30 dias
+                </span>
+              )}
+            </div>
           )}
           {editMode && canManage && (
             <div className="mt-2 flex items-center gap-1 text-[10px] text-muted-foreground">
@@ -684,6 +735,8 @@ export function WarehouseMap({
               <option value="bloqueados">Bloqueados</option>
               <option value="reservados">Reservados</option>
               <option value="estoque_baixo">Materiais abaixo do mínimo</option>
+              <option value="validade_vencida">Lotes vencidos</option>
+              <option value="validade_proxima">Validade em até 30 dias</option>
             </select>
           </span>
         </label>
@@ -773,6 +826,8 @@ export function WarehouseMap({
           { label: "Posições ocupadas", value: String(occupiedCount), detail: occupancyRate === null ? "Sem posições configuradas" : occupancyRate + "% das posições" },
           { label: "Bloqueadas / reservadas", value: String(blockedCount) + " / " + String(reservedCount), detail: "Situação cadastral do endereço" },
           { label: "Com estoque abaixo do mínimo", value: String(lowStockCount), detail: "Localizações com materiais em alerta" },
+          { label: "Com lotes vencidos", value: String(expiredLocationCount), detail: "Endereços com pelo menos um lote vencido" },
+          { label: "Com validade próxima", value: String(nearExpiryLocationCount), detail: "Endereços com lote vencendo em até 30 dias" },
         ].map((item) => (
           <div key={item.label} className="rounded-lg border bg-muted/20 p-3">
             <p className="text-xs text-muted-foreground">{item.label}</p>
@@ -800,7 +855,7 @@ export function WarehouseMap({
           Não existem endereços ativos cadastrados neste armazém.
         </div>
       ) : (
-        <div className="mt-4 min-w-0 max-h-[72vh] overflow-auto rounded-xl border bg-muted/10 p-3 sm:p-4">
+        <div className="mt-4 min-w-0 max-w-full max-h-[72vh] overflow-y-auto overflow-x-hidden rounded-xl border bg-muted/10 p-2 sm:p-4>
           <div
             className="min-w-0 w-full origin-top-left"
             style={{ zoom: zoom / 100 }}
@@ -817,7 +872,7 @@ export function WarehouseMap({
       )}
 
       {selectedLocation && (
-        <div className="mt-5 rounded-xl border bg-card p-4">
+        <div className="mt-5 min-w-0 w-full max-w-full overflow-hidden rounded-xl border bg-card p-3 sm:p-4>
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="min-w-0">
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -827,7 +882,7 @@ export function WarehouseMap({
               <h3 className="mt-1 break-words text-lg font-semibold">
                 {selectedLocation.code} — {selectedLocation.name}
               </h3>
-              <p className="mt-1 text-xs text-muted-foreground">
+              <p className="mt-1 break-words text-xs text-muted-foreground [overflow-wrap:anywhere]">
                 {selectedPath.map((location) => location.code).join(" / ")}
               </p>
             </div>
@@ -889,42 +944,81 @@ export function WarehouseMap({
             </div>
           </div>
 
-          <div className="mt-4 grid gap-4 xl:grid-cols-2">
-            <div>
+          <div className="mt-4 grid min-w-0 gap-4 xl:grid-cols-2">
+            <div className="min-w-0">
               <h4 className="mb-2 flex items-center gap-2 text-sm font-semibold">
                 <Package className="h-4 w-4" /> Materiais armazenados
               </h4>
               {selectedBalances.length ? (
-                <div className="overflow-x-auto rounded-lg border">
-                  <table className="w-full min-w-[440px] text-left text-xs">
-                    <thead className="bg-muted/60 text-muted-foreground">
-                      <tr>
-                        <th className="p-2">Material</th>
-                        <th className="p-2">Lote</th>
-                        <th className="p-2">Quantidade</th>
-                        <th className="p-2">Unidade</th>
-                        <th className="p-2">Validade</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y">
-                      {selectedBalances.map((balance) => {
-                        const material = materialsById.get(balance.material_id);
-                        return (
-                          <tr key={balance.material_id + ":" + String(balance.lot ?? "")}>
-                            <td className="p-2">
-                              <strong>{material?.code ?? "Material"}</strong>
-                              <span className="ml-1 text-muted-foreground">{material?.description ?? ""}</span>
-                            </td>
-                            <td className="p-2">{balance.lot || "—"}</td>
-                            <td className="p-2 tabular-nums">{formatQuantity(Number(balance.quantity || 0))}</td>
-                            <td className="p-2">{material?.unit ?? "—"}</td>
-                            <td className="p-2">{balance.expiry_date ? new Date(balance.expiry_date + "T12:00:00").toLocaleDateString("pt-BR") : "—"}</td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
+                <>
+                  <div className="hidden max-w-full overflow-x-auto rounded-lg border sm:block">
+                    <table className="w-full min-w-[560px] text-left text-xs">
+                      <thead className="bg-muted/60 text-muted-foreground">
+                        <tr>
+                          <th className="p-2">Material</th>
+                          <th className="p-2">Lote</th>
+                          <th className="p-2">Quantidade</th>
+                          <th className="p-2">Unidade</th>
+                          <th className="p-2">Validade</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y">
+                        {selectedBalances.map((balance) => {
+                          const material = materialsById.get(balance.material_id);
+                          const expiryDays = daysUntilExpiry(balance.expiry_date);
+                          return (
+                            <tr key={balance.material_id + ":" + String(balance.lot ?? "")}>
+                              <td className="max-w-[16rem] p-2">
+                                <strong>{material?.code ?? "Material"}</strong>
+                                <span className="ml-1 break-words text-muted-foreground">{material?.description ?? ""}</span>
+                              </td>
+                              <td className="p-2">{balance.lot || "—"}</td>
+                              <td className="p-2 tabular-nums">{formatQuantity(Number(balance.quantity || 0))}</td>
+                              <td className="p-2">{material?.unit ?? "—"}</td>
+                              <td className="p-2">
+                                <span className={expiryDays !== null && expiryDays < 0 ? "font-semibold text-red-700 dark:text-red-300" : expiryDays !== null && expiryDays <= 30 ? "font-semibold text-amber-700 dark:text-amber-300" : ""}>
+                                  {balance.expiry_date ? new Date(balance.expiry_date + "T12:00:00").toLocaleDateString("pt-BR") : "—"}
+                                </span>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="grid min-w-0 gap-2 sm:hidden">
+                    {selectedBalances.map((balance) => {
+                      const material = materialsById.get(balance.material_id);
+                      const expiryDays = daysUntilExpiry(balance.expiry_date);
+                      return (
+                        <article key={balance.material_id + ":" + String(balance.lot ?? "")} className="min-w-0 rounded-lg border bg-muted/25 p-3">
+                          <div className="flex min-w-0 items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <p className="break-words text-sm font-semibold">{material?.code ?? "Material"}</p>
+                              <p className="break-words text-xs text-muted-foreground [overflow-wrap:anywhere]">{material?.description ?? ""}</p>
+                            </div>
+                            <p className="shrink-0 text-sm font-bold tabular-nums">{formatQuantity(Number(balance.quantity || 0))} <span className="text-xs font-medium text-muted-foreground">{material?.unit ?? ""}</span></p>
+                          </div>
+                          <dl className="mt-3 grid min-w-0 grid-cols-2 gap-2">
+                            <div className="min-w-0 rounded-md bg-background/75 p-2">
+                              <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Lote</dt>
+                              <dd className="break-words text-xs [overflow-wrap:anywhere]">{balance.lot || "—"}</dd>
+                            </div>
+                            <div className="min-w-0 rounded-md bg-background/75 p-2">
+                              <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Validade</dt>
+                              <dd className="break-words text-xs [overflow-wrap:anywhere]">{balance.expiry_date ? new Date(balance.expiry_date + "T12:00:00").toLocaleDateString("pt-BR") : "Não informada"}</dd>
+                            </div>
+                          </dl>
+                          {expiryDays !== null && expiryDays <= 30 && (
+                            <p className={expiryDays < 0 ? "mt-2 rounded-md bg-red-50 px-2 py-1 text-xs font-semibold text-red-800 dark:bg-red-950/40 dark:text-red-200" : "mt-2 rounded-md bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-800 dark:bg-amber-950/40 dark:text-amber-200"}>
+                              {expiryLabel(balance.expiry_date)}
+                            </p>
+                          )}
+                        </article>
+                      );
+                    })}
+                  </div>
+                </>
               ) : (
                 <p className="rounded-lg border border-dashed p-4 text-xs text-muted-foreground">
                   Nenhum saldo registrado diretamente neste endereço.
@@ -932,7 +1026,7 @@ export function WarehouseMap({
               )}
             </div>
 
-            <div className="space-y-4">
+            <div className="min-w-0 space-y-4">
               <div>
                 <h4 className="mb-2 flex items-center gap-2 text-sm font-semibold">
                   <Clock3 className="h-4 w-4" /> Movimentações recentes
@@ -940,7 +1034,7 @@ export function WarehouseMap({
                 {selectedMovements.length ? (
                   <div className="space-y-2">
                     {selectedMovements.map((movement) => (
-                      <div key={movement.id} className="rounded-lg border p-2 text-xs">
+                      <div key={movement.id} className="min-w-0 break-words rounded-lg border p-2 text-xs [overflow-wrap:anywhere]">
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <strong>{movementLabel(movement.type)} · {movement.number ?? "—"}</strong>
                           <span className="text-muted-foreground">{formatDate(movement.created_at)}</span>
@@ -968,7 +1062,7 @@ export function WarehouseMap({
                 {selectedTasks.length ? (
                   <div className="space-y-2">
                     {selectedTasks.map((task) => (
-                      <div key={task.id} className="rounded-lg border p-2 text-xs">
+                      <div key={task.id} className="min-w-0 break-words rounded-lg border p-2 text-xs [overflow-wrap:anywhere]">
                         <div className="flex items-start justify-between gap-2">
                           <strong>{task.title}</strong>
                           <span className="rounded-full bg-muted px-2 py-0.5">{task.status.replaceAll("_", " ")}</span>
