@@ -761,9 +761,24 @@ function Index() {
       const children = addressChildrenByParent.get(location.id) ?? [];
       const hasChildren = children.length > 0;
       const isCollapsed = collapsedAddressRows.has(location.id) && !addressSearch;
-      const quantity = balances
-        .filter(balance => balance.location_id === location.id)
-        .reduce((total, balance) => total + Number(balance.quantity || 0), 0);
+      const directBalances = balances.filter((balance) => balance.location_id === location.id && Number(balance.quantity) > 0);
+      const quantityByUnit = new Map<string, number>();
+      for (const balance of directBalances) {
+        const unit = materials.find((material) => material.id === balance.material_id)?.unit ?? "un";
+        quantityByUnit.set(unit, (quantityByUnit.get(unit) ?? 0) + Number(balance.quantity || 0));
+      }
+      const quantityLabel = quantityByUnit.size
+        ? [...quantityByUnit.entries()]
+            .sort(([unitA], [unitB]) => unitA.localeCompare(unitB, "pt-BR"))
+            .map(([unit, total]) => `${dashboardNumber(total)} ${unit}`)
+            .join(" · ")
+        : "—";
+      const isStoragePosition = storagePositionIds.has(location.id);
+      const locationType = hasChildren
+        ? "Estrutura · possui subendereços"
+        : isStoragePosition
+          ? "Posição de armazenagem"
+          : "Nível não armazenável";
       const parentCode = addressById.get(location.parent_id)?.code;
       addressRows.push([
         <div className="flex min-w-0 items-center gap-1.5" style={{ paddingLeft: depth * 18 + "px" }}>
@@ -782,7 +797,8 @@ function Index() {
         `${warehouses.find(warehouse => warehouse.id === location.warehouse_id)?.name ?? "—"} / ${levels.find(level => level.id === location.level_id)?.name ?? "—"}`,
         pretty(parentCode),
         statusPill(location.status),
-        quantity,
+        <span className={isStoragePosition ? "text-emerald-700 dark:text-emerald-300" : "text-muted-foreground"}>{locationType}</span>,
+        <span className="tabular-nums">{quantityLabel}</span>,
         canManage ? <div className="flex flex-wrap gap-2">
           <button type="button" title="Editar endereço" className="rounded border p-2" onClick={() => setLocForm({
             id: location.id, warehouse_id: location.warehouse_id, level_id: location.level_id,
@@ -791,7 +807,7 @@ function Index() {
             capacity_unit: location.capacity_unit ?? "un", notes: location.notes ?? "",
           })}><Pencil className="h-4 w-4" /></button>
           <button type="button" title="Desativar endereço" className="rounded border p-2" onClick={() => void runSave(async () => {
-            if (quantity > 0) throw new Error("Não é possível desativar um endereço com saldo. Transfira o estoque antes.");
+            if (directBalances.length > 0) throw new Error("Não é possível desativar um endereço com saldo. Transfira o estoque antes.");
             const { error } = await db.from("locations").update({ active: false, updated_at: new Date().toISOString() }).eq("id", location.id).eq("org_id", orgId);
             if (error) throw error;
           }, "Endereço desativado.")}><Ban className="h-4 w-4" /></button>
@@ -824,7 +840,7 @@ function Index() {
         </div>
       </div>
       {addressSearch && <p className="mb-2 text-xs text-muted-foreground">Os caminhos hierárquicos dos resultados da pesquisa são expandidos automaticamente.</p>}
-      <Table headers={["Código","Nome","Armazém / nível","Pai","Situação","Saldo","Ações"]} rows={addressRows} />
+      <Table headers={["Código","Nome","Armazém / nível","Pai","Situação","Tipo de endereço","Saldo direto por unidade","Ações"]} rows={addressRows} />
     </Panel>
     <WarehouseMap
       warehouses={warehouses}
