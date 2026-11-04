@@ -886,8 +886,11 @@ export function WarehouseMap({
           </div>
           <div className="mt-3 grid grid-cols-2 gap-1.5">
             <div className="rounded-md border border-slate-200/80 bg-background/70 px-2 py-1.5 dark:border-slate-700">
-              <p className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">Materiais diretos</p>
+              <p className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">{hasChildren ? "Saldos diretos · a revisar" : "Materiais diretos"}</p>
               <p className="text-xs font-semibold tabular-nums">{materialCount}</p>
+              {hasChildren && directBalances.length > 0 && (
+                <p className="mt-0.5 text-[9px] text-amber-700 dark:text-amber-300">Saldo legado fora da ocupação dos subendereços</p>
+              )}
             </div>
             <div className="rounded-md border border-slate-200/80 bg-background/70 px-2 py-1.5 dark:border-slate-700">
               <p className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">{hasChildren ? "Subendereços" : "Tarefas abertas"}</p>
