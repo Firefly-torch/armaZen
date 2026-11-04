@@ -391,7 +391,7 @@ function Index() {
   const storageLocationOptions = locations.filter((location) => storagePositionIds.has(location.id));
   const destinationLocationOptions = storageLocationOptions.filter((location) => location.status !== "bloqueado");
   const sourceLocationOptions = locations.filter((location) =>
-    location.active && (storagePositionIds.has(location.id) || balances.some((balance) => balance.location_id === location.id && Number(balance.quantity) > 0)),
+    location.active && activeWarehouseIds.has(location.warehouse_id) && (storagePositionIds.has(location.id) || balances.some((balance) => balance.location_id === location.id && Number(balance.quantity) > 0)),
   );
 
   // Indicadores de disponibilidade usam somente posições finais válidas.
