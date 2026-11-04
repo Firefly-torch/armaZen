@@ -903,6 +903,16 @@ function Index() {
     />
   </div>;
 
+  const materialStockStats = {
+    total: materials.filter((material) => material.status === "ativo").length,
+    belowMinimum: materials.filter((material) =>
+      (material.status === "ativo" || material.status === "active") &&
+      (stockSummaries.get(material.id)?.availableQuantity ?? 0) < Number(material.min_stock || 0)
+    ).length,
+    restricted: [...stockSummaries.values()].filter((stock) => stock.reservedQuantity + stock.blockedQuantity > 0).length,
+    review: [...stockSummaries.values()].filter((stock) => stock.reviewQuantity > 0).length,
+  };
+
   const materialRows = filtered(materials, ["code", "description", "category", "barcode"])
     .filter((material) =>
       (materialFilters.status === "todos" || material.status === materialFilters.status) &&
@@ -918,21 +928,25 @@ function Index() {
       const blocked = stock?.blockedQuantity ?? 0;
       const review = stock?.reviewQuantity ?? 0;
       const total = stock?.totalQuantity ?? 0;
-      const low = available < Number(material.min_stock || 0);
+      const minimum = Number(material.min_stock || 0);
+      const low = available < minimum;
       return [
         <div className="min-w-[12rem]">
           <p className="font-semibold">{material.code}</p>
           <p className="text-xs text-muted-foreground">{material.description}</p>
+          <p className="mt-1 text-[10px] text-muted-foreground">{pretty(material.category)} · Unidade: {material.unit}</p>
         </div>,
-        pretty(material.category),
-        material.unit,
-        <span className="font-semibold tabular-nums text-emerald-700 dark:text-emerald-300">{dashboardNumber(available)}</span>,
-        reserved ? <span className="tabular-nums text-amber-700 dark:text-amber-300">{dashboardNumber(reserved)}</span> : "—",
-        blocked ? <span className="tabular-nums text-red-700 dark:text-red-300">{dashboardNumber(blocked)}</span> : "—",
-        review ? <span className="font-semibold tabular-nums text-orange-700 dark:text-orange-300">{dashboardNumber(review)}</span> : "—",
-        <span className="tabular-nums">{dashboardNumber(total)}</span>,
-        <span className="tabular-nums">{dashboardNumber(Number(material.min_stock || 0))}</span>,
-        low ? <span className="font-semibold text-amber-700 dark:text-amber-300">Abaixo do mínimo</span> : <span className="text-emerald-700 dark:text-emerald-300">Normal</span>,
+        <span className="font-semibold tabular-nums text-emerald-700 dark:text-emerald-300">{dashboardNumber(available)} {material.unit}</span>,
+        <div className="space-y-1 text-xs tabular-nums">
+          <p className={reserved ? "text-amber-700 dark:text-amber-300" : "text-muted-foreground"}>Reservado: {dashboardNumber(reserved)} {material.unit}</p>
+          <p className={blocked ? "text-red-700 dark:text-red-300" : "text-muted-foreground"}>Bloqueado: {dashboardNumber(blocked)} {material.unit}</p>
+        </div>,
+        review ? <span className="font-semibold tabular-nums text-orange-700 dark:text-orange-300">{dashboardNumber(review)} {material.unit}</span> : "—",
+        <span className="tabular-nums">{dashboardNumber(total)} {material.unit}</span>,
+        <span className="tabular-nums">{dashboardNumber(minimum)} {material.unit}</span>,
+        low
+          ? <span className="font-semibold text-amber-700 dark:text-amber-300">Abaixo do mínimo</span>
+          : <span className="text-emerald-700 dark:text-emerald-300">Normal</span>,
         statusPill(material.status),
         <div className="flex gap-2">
           {canManage && <button className="rounded border p-2" title="Editar" onClick={() => {
@@ -992,18 +1006,18 @@ function Index() {
       {canManage?<form className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4" onSubmit={e=>{e.preventDefault();void runSave(async()=>{let storedAttrs:AnyRow={};try{storedAttrs=JSON.parse(matForm.attributes||"{}");if(!storedAttrs||Array.isArray(storedAttrs)||typeof storedAttrs!=="object")throw new Error();}catch{throw new Error("Os atributos já salvos deste material estão inválidos.");}const attrs:AnyRow={...storedAttrs};for(const attribute of materialAttributes){const raw=attributeValues[attribute.key]??String(storedAttrs[attribute.key]??"");if(attribute.required&&!String(raw).trim())throw new Error(`Preencha o campo obrigatório: ${attribute.label}.`);if(!String(raw).trim()){delete attrs[attribute.key];continue;}if(attribute.data_type==="number"){const numeric=Number(raw);if(!Number.isFinite(numeric))throw new Error(`O campo ${attribute.label} precisa ser numérico.`);attrs[attribute.key]=numeric;}else if(attribute.data_type==="boolean"){attrs[attribute.key]=raw==="true";}else{attrs[attribute.key]=raw;}}const p={org_id:orgId,code:matForm.code.trim(),description:matForm.description.trim(),category:matForm.category.trim(),unit:matForm.unit.trim(),barcode:matForm.barcode.trim()||null,min_stock:Number(matForm.min_stock),status:matForm.status,tracks_lot:matForm.tracks_lot,attributes:attrs,updated_at:new Date().toISOString()};const q=matForm.id?db.from("materials").update(p).eq("id",matForm.id):db.from("materials").insert(p);const {error}=await q;if(error)throw error;setMatForm({id:"",code:"",description:"",category:"Geral",unit:"un",barcode:"",min_stock:"0",status:"ativo",tracks_lot:false,attributes:"{}"});setAttributeValues({});},"Material salvo.");}}><Field label="Código interno" value={matForm.code} onChange={v=>setMatForm({...matForm,code:v})} required/><Field label="Descrição" value={matForm.description} onChange={v=>setMatForm({...matForm,description:v})} required/><Field label="Categoria" value={matForm.category} onChange={v=>setMatForm({...matForm,category:v})} required/><Field label="Unidade de medida" value={matForm.unit} onChange={v=>setMatForm({...matForm,unit:v})} required/><Field label="Código de barras (opcional)" value={matForm.barcode} onChange={v=>setMatForm({...matForm,barcode:v})}/><Field label="Estoque mínimo" type="number" min={0} step={0.01} value={matForm.min_stock} onChange={v=>setMatForm({...matForm,min_stock:v})} required/><SelectField label="Status" value={matForm.status} onChange={v=>setMatForm({...matForm,status:v})} options={[{value:"ativo",label:"Ativo"},{value:"inativo",label:"Inativo"}]} required/><label className="flex items-center gap-2 self-end pb-2 text-sm"><input type="checkbox" checked={matForm.tracks_lot} onChange={e=>setMatForm({...matForm,tracks_lot:e.target.checked})}/> Exige identificação de lote</label><p className="text-xs text-muted-foreground sm:col-span-2 xl:col-span-4">Quando marcado, novas entradas exigem lote. Saldos legados sem lote ainda podem ser retirados, transferidos ou contados na posição em que já estão registrados. A validade ainda não é informada no fluxo normal de entrada.</p><div className="grid gap-3 sm:col-span-2 sm:grid-cols-2 xl:col-span-4">{materialAttributes.length?materialAttributes.map(attribute=>attribute.data_type==="boolean"?<SelectField key={attribute.key} label={`${attribute.label}${attribute.required?" *":""}`} value={attributeValues[attribute.key]??""} onChange={value=>setAttributeValues(current=>({...current,[attribute.key]:value}))} required={attribute.required} options={[{value:"true",label:"Sim"},{value:"false",label:"Não"}]}/>:<Field key={attribute.key} label={`${attribute.label}${attribute.required?" *":""}`} type={attribute.data_type==="number"?"number":attribute.data_type==="date"?"date":"text"} value={attributeValues[attribute.key]??""} onChange={value=>setAttributeValues(current=>({...current,[attribute.key]:value}))} required={attribute.required}/>):<p className="text-xs text-muted-foreground">A Gestão pode configurar campos adicionais em Usuários e configurações.</p>}</div><div className="flex items-end gap-2"><button disabled={saving} className="h-10 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground">{matForm.id?"Salvar alterações":"Cadastrar material"}</button>{matForm.id&&<button type="button" className="h-10 rounded-lg border px-3 text-sm" onClick={()=>{setMatForm({id:"",code:"",description:"",category:"Geral",unit:"un",barcode:"",min_stock:"0",status:"ativo",tracks_lot:false,attributes:"{}"});setAttributeValues({});}}>Cancelar</button>}</div></form>:<Empty>O perfil atual não possui permissão para cadastrar ou editar materiais.</Empty>}
     </Panel>
     <Panel title="Materiais e saldos" description="Os totais ficam separados por condição operacional. 'Total registrado' preserva todos os lançamentos; apenas 'Disponível' deve orientar separação e necessidade de reposição.">
-      <div className="mb-3 grid gap-3 rounded-xl border bg-muted/20 p-3 sm:grid-cols-2 xl:grid-cols-4">
-        <div><p className="text-xs text-muted-foreground">Disponível</p><p className="mt-1 text-lg font-semibold text-emerald-700 dark:text-emerald-300">Pode ser considerado para separação</p></div>
-        <div><p className="text-xs text-muted-foreground">Reservado / bloqueado</p><p className="mt-1 text-sm font-medium">Existe fisicamente, mas não é saldo livre</p></div>
-        <div><p className="text-xs text-muted-foreground">A revisar</p><p className="mt-1 text-sm font-medium">Em endereço estrutural ou inativo</p></div>
-        <div><p className="text-xs text-muted-foreground">Total registrado</p><p className="mt-1 text-sm font-medium">Conferência contábil de todos os saldos</p></div>
+      <div className="mb-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="rounded-lg border bg-card p-3"><p className="text-xs text-muted-foreground">Materiais ativos</p><p className="mt-1 text-2xl font-bold tabular-nums">{materialStockStats.total}</p></div>
+        <div className="rounded-lg border bg-card p-3"><p className="text-xs text-muted-foreground">Abaixo do mínimo</p><p className="mt-1 text-2xl font-bold tabular-nums text-amber-700 dark:text-amber-300">{materialStockStats.belowMinimum}</p></div>
+        <div className="rounded-lg border bg-card p-3"><p className="text-xs text-muted-foreground">Com saldo reservado/bloqueado</p><p className="mt-1 text-2xl font-bold tabular-nums">{materialStockStats.restricted}</p></div>
+        <div className="rounded-lg border bg-card p-3"><p className="text-xs text-muted-foreground">Com saldo a revisar</p><p className="mt-1 text-2xl font-bold tabular-nums text-orange-700 dark:text-orange-300">{materialStockStats.review}</p></div>
       </div>
       <div className="grid gap-3 md:grid-cols-3">
         <div className="min-w-0"><div className="flex gap-2"><Search className="mt-2.5 h-4 w-4 shrink-0 text-muted-foreground"/><input className="h-10 w-full min-w-0 rounded-lg border bg-background px-3 text-sm" placeholder="Código, descrição ou barras..." value={search} onChange={e=>setSearch(e.target.value)}/></div><p className="mt-1 text-[11px] text-muted-foreground">Compatível com leitor físico configurado como teclado.</p></div>
         <SelectField label="Situação do cadastro" value={materialFilters.status} onChange={value=>setMaterialFilters(current=>({...current,status:value}))} options={[{value:"todos",label:"Todas as situações"},{value:"ativo",label:"Ativos"},{value:"inativo",label:"Inativos"}]}/>
         <SelectField label="Nível do saldo disponível" value={materialFilters.stock} onChange={value=>setMaterialFilters(current=>({...current,stock:value}))} options={[{value:"todos",label:"Todos os níveis"},{value:"baixo",label:"Disponível abaixo do mínimo"},{value:"normal",label:"Disponível no mínimo ou acima"}]}/>
       </div>
-      <Table headers={["Material","Categoria","Unidade","Disponível","Reservado","Bloqueado","A revisar","Total registrado","Mínimo","Nível","Cadastro","Ações"]} rows={materialRows}/>
+      <Table headers={["Material","Disponível","Não disponível","A revisar","Total registrado","Estoque mínimo","Nível","Cadastro","Ações"]} rows={materialRows}/>
       <p className="mt-2 text-xs text-muted-foreground">O indicador de estoque mínimo compara o mínimo cadastrado somente com o saldo disponível. Saldos em revisão não são descartados: permanecem listados abaixo para conferência e transferência.</p>
     </Panel>
     <Panel title="Saldos por endereço" description="Ordenados por material e endereço. O caminho mostra a hierarquia completa; saldos em endereços estruturais ou inativos ficam destacados para revisão.">
