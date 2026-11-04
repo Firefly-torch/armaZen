@@ -247,11 +247,7 @@ export function WarehouseMap({
           ?.closest<HTMLElement>("[data-location-id]");
         const targetId = targetElement?.dataset.locationId;
         const target = targetId ? locationsById.get(targetId) : undefined;
-        setDropTargetId(
-          source && target && target.id !== source.id && target.parent_id === source.parent_id
-            ? target.id
-            : null,
-        );
+        setDropTargetId(source && target && target.id !== source.id ? target.id : null);
       });
     };
     // Wheel scrolling remains native; this listener only recalculates the drop target
@@ -561,7 +557,10 @@ export function WarehouseMap({
 
     // Dropping on a structural address nests the source under it. Dropping on
     // a storage leaf places the source beside that leaf, under the same parent.
-    const targetIsStructural = levelsById.get(target.level_id)?.is_storage === false;
+    const targetHasChildren = (childrenByParent.get(target.id) ?? []).length > 0;
+    const targetIsStorageLevel = levelsById.get(target.level_id)?.is_storage !== false;
+    if (targetHasChildren && targetIsStorageLevel) return undefined;
+    const targetIsStructural = !targetIsStorageLevel;
     const destinationParentId = targetIsStructural ? target.id : target.parent_id ?? null;
 
     if (destinationParentId) {
@@ -569,7 +568,8 @@ export function WarehouseMap({
       if (
         !destinationParent ||
         destinationParent.warehouse_id !== source.warehouse_id ||
-        levelsById.get(destinationParent.level_id)?.is_storage !== false
+        levelsById.get(destinationParent.level_id)?.is_storage !== false ||
+        (childrenByParent.get(destinationParent.id) ?? []).length > 0 && levelsById.get(destinationParent.level_id)?.is_storage !== false
       ) {
         return undefined;
       }
