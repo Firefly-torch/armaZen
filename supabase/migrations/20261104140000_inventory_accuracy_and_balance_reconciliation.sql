@@ -27,6 +27,16 @@ begin
 
   perform pg_advisory_xact_lock(hashtext(_org::text)::bigint);
 
+  -- Freeze balance and movement writes for a consistent audit/rebuild.
+  -- Acquire the balances lock first because movement routines update balances
+  -- before appending their stock_movement ledger row.
+  if _apply then
+    lock table public.inventory_balances in access exclusive mode;
+  else
+    lock table public.inventory_balances in share mode;
+  end if;
+  lock table public.stock_movements in share mode;
+
   -- The ledger must be interpretable before it can be treated as the source of
   -- truth. Reject orphaned endpoints and cross-organization references.
   if exists (
