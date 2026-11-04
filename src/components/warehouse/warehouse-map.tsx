@@ -118,6 +118,7 @@ type WarehouseMapProps = {
     targetPosition: { x: number; y: number },
   ) => Promise<void>;
   onMoveLocation: (locationId: string, parentId: string | null, posX: number, posY: number) => Promise<void>;
+  onTransferLegacyBalance: (materialId: string, sourceLocationId: string, destinationLocationId: string, lot: string, quantity: number) => Promise<void>;
   onOpenTasks: () => void;
   onOpenMovements: () => void;
 };
@@ -195,6 +196,7 @@ export function WarehouseMap({
   onUpdatePosition,
   onSwapPositions,
   onMoveLocation,
+  onTransferLegacyBalance,
   onOpenTasks,
   onOpenMovements,
 }: WarehouseMapProps) {
@@ -207,6 +209,7 @@ export function WarehouseMap({
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
   const dragPointerRef = useRef<{ locationId: string; clientX: number; clientY: number } | null>(null);
   const [mapError, setMapError] = useState("");
+  const [legacyDestinationByBalance, setLegacyDestinationByBalance] = useState<Record<string, string>>({});
 
   const activeWarehouses = useMemo(
     () => warehouses.filter((warehouse) => warehouse.active),
@@ -499,6 +502,25 @@ export function WarehouseMap({
   const selectedParentOccupancy = selectedLocation
     ? descendantOccupancyByLocation.get(selectedLocation.id) ?? null
     : null;
+  const selectedParentStorageDestinations = useMemo(() => {
+    if (!selectedLocation || !selectedParentOccupancy) return [];
+    return warehouseLocations
+      .filter((candidate) => {
+        if (!storageLocationIds.has(candidate.id) || candidate.status !== "disponivel") return false;
+        let current = candidate;
+        let depth = 0;
+        while (current.parent_id && depth < 20) {
+          if (current.parent_id === selectedLocation.id) return true;
+          const parent = locationsById.get(current.parent_id);
+          if (!parent) return false;
+          current = parent;
+          depth += 1;
+        }
+        return false;
+      })
+      .sort((a, b) => a.code.localeCompare(b.code, "pt-BR", { numeric: true }));
+  }, [selectedLocation, selectedParentOccupancy, warehouseLocations, storageLocationIds, locationsById]);
+
   const selectedUnitTotals = selectedLocation ? getUnitTotals(selectedLocation.id) : new Map<string, number>();
   const selectedCapacityUnit = String(selectedLocation?.capacity_unit ?? "").trim().toLowerCase();
   const capacityCompatible = Boolean(
@@ -1321,8 +1343,13 @@ export function WarehouseMap({
           <div className="mt-4 grid min-w-0 gap-4 xl:grid-cols-2">
             <div className="min-w-0">
               <h4 className="mb-2 flex items-center gap-2 text-sm font-semibold">
-                <Package className="h-4 w-4" /> Saldos registrados diretamente
+                <Package className="h-4 w-4" /> {selectedParentOccupancy ? "Saldos legados diretamente no endereço-pai" : "Saldos registrados diretamente"}
               </h4>
+              {selectedParentOccupancy && selectedBalances.length > 0 && (
+                <p className="mb-2 rounded-lg border border-amber-300/70 bg-amber-50/60 p-2.5 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+                  Estes saldos antigos não entram na ocupação dos subendereços nem na disponibilidade. Confira fisicamente o material e escolha a posição descendente correta; a transferência será registrada no histórico e removerá o saldo deste endereço-pai.
+                </p>
+              )}
               {selectedBalances.length ? (
                 <>
                   <div className="hidden max-w-full overflow-x-auto rounded-lg border sm:block">
@@ -1334,6 +1361,7 @@ export function WarehouseMap({
                           <th className="p-2">Quantidade</th>
                           <th className="p-2">Unidade</th>
                           <th className="p-2">Validade</th>
+                          {canManage && selectedParentOccupancy && <th className="p-2">Regularizar em</th>}
                         </tr>
                       </thead>
                       <tbody className="divide-y">
@@ -1354,6 +1382,41 @@ export function WarehouseMap({
                                   {balance.expiry_date ? new Date(balance.expiry_date + "T12:00:00").toLocaleDateString("pt-BR") : "—"}
                                 </span>
                               </td>
+                              {canManage && selectedParentOccupancy && (
+                                <td className="min-w-[15rem] p-2">
+                                  {selectedParentStorageDestinations.length ? (
+                                    <div className="flex min-w-[14rem] flex-col gap-1.5">
+                                      <select
+                                        className="h-8 rounded-md border bg-background px-2 text-xs"
+                                        value={legacyDestinationByBalance[selectedLocation.id + ":" + balance.material_id + ":" + String(balance.lot ?? "")] ?? ""}
+                                        onChange={(event) => setLegacyDestinationByBalance((current) => ({
+                                          ...current,
+                                          [selectedLocation.id + ":" + balance.material_id + ":" + String(balance.lot ?? "")]: event.target.value,
+                                        }))}
+                                      >
+                                        <option value="">Escolha uma posição descendente...</option>
+                                        {selectedParentStorageDestinations.map((destination) => (
+                                          <option key={destination.id} value={destination.id}>
+                                            {destination.code} — {destination.name}
+                                          </option>
+                                        ))}
+                                      </select>
+                                      <button
+                                        type="button"
+                                        disabled={saving || !legacyDestinationByBalance[selectedLocation.id + ":" + balance.material_id + ":" + String(balance.lot ?? "")]}
+                                        className="self-start rounded-md bg-primary px-2.5 py-1.5 text-xs font-semibold text-primary-foreground disabled:opacity-50"
+                                        onClick={() => {
+                                          const destinationId = legacyDestinationByBalance[selectedLocation.id + ":" + balance.material_id + ":" + String(balance.lot ?? "")];
+                                          if (!destinationId) return;
+                                          void onTransferLegacyBalance(balance.material_id, selectedLocation.id, destinationId, balance.lot ?? "", Number(balance.quantity));
+                                        }}
+                                      >
+                                        Transferir saldo completo
+                                      </button>
+                                    </div>
+                                  ) : <span className="text-xs text-muted-foreground">Nenhuma posição descendente disponível</span>}
+                                </td>
+                              )}
                             </tr>
                           );
                         })}
@@ -1387,6 +1450,40 @@ export function WarehouseMap({
                             <p className={expiryDays < 0 ? "mt-2 rounded-md bg-red-50 px-2 py-1 text-xs font-semibold text-red-800 dark:bg-red-950/40 dark:text-red-200" : "mt-2 rounded-md bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-800 dark:bg-amber-950/40 dark:text-amber-200"}>
                               {expiryLabel(balance.expiry_date)}
                             </p>
+                          )}
+                          {canManage && selectedParentOccupancy && (
+                            <div className="mt-3 border-t pt-3">
+                              <label className="grid gap-1.5 text-xs font-medium">
+                                <span>Transferir para uma posição descendente</span>
+                                <select
+                                  className="h-9 w-full rounded-md border bg-background px-2"
+                                  value={legacyDestinationByBalance[selectedLocation.id + ":" + balance.material_id + ":" + String(balance.lot ?? "")] ?? ""}
+                                  onChange={(event) => setLegacyDestinationByBalance((current) => ({
+                                    ...current,
+                                    [selectedLocation.id + ":" + balance.material_id + ":" + String(balance.lot ?? "")]: event.target.value,
+                                  }))}
+                                >
+                                  <option value="">Escolha uma posição...</option>
+                                  {selectedParentStorageDestinations.map((destination) => (
+                                    <option key={destination.id} value={destination.id}>
+                                      {destination.code} — {destination.name}
+                                    </option>
+                                  ))}
+                                </select>
+                              </label>
+                              <button
+                                type="button"
+                                disabled={saving || !legacyDestinationByBalance[selectedLocation.id + ":" + balance.material_id + ":" + String(balance.lot ?? "")]}
+                                className="mt-2 rounded-md bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-50"
+                                onClick={() => {
+                                  const destinationId = legacyDestinationByBalance[selectedLocation.id + ":" + balance.material_id + ":" + String(balance.lot ?? "")];
+                                  if (!destinationId) return;
+                                  void onTransferLegacyBalance(balance.material_id, selectedLocation.id, destinationId, balance.lot ?? "", Number(balance.quantity));
+                                }}
+                              >
+                                Transferir saldo completo
+                              </button>
+                            </div>
                           )}
                         </article>
                       );
