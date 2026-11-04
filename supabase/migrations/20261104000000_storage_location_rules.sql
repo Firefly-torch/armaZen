@@ -292,22 +292,27 @@ begin
       raise exception 'O endereço pai deve pertencer à mesma organização e ao mesmo armazém.';
     end if;
 
-    if not p.parent_active or not p.warehouse_active then
-      raise exception 'O endereço pai e seu armazém precisam estar ativos.';
-    end if;
+    -- Validate active/structural parent and direct stock only when the
+    -- hierarchy is created or changed. This avoids blocking routine edits to
+    -- legacy child locations whose parent needs later cleanup.
+    if tg_op = 'INSERT' or new.parent_id is distinct from old.parent_id then
+      if not p.parent_active or not p.warehouse_active then
+        raise exception 'O endereço pai e seu armazém precisam estar ativos.';
+      end if;
 
-    if p.is_storage then
-      raise exception 'Uma posição de armazenagem não pode receber subendereços. Use um nível estrutural como endereço pai.';
-    end if;
+      if p.is_storage then
+        raise exception 'Uma posição de armazenagem não pode receber subendereços. Use um nível estrutural como endereço pai.';
+      end if;
 
-    if exists (
-      select 1
-        from public.inventory_balances b
-       where b.location_id = new.parent_id
-         and b.org_id = new.org_id
-         and b.quantity > 0
-    ) then
-      raise exception 'O endereço pai possui saldo direto. Transfira o estoque para uma posição final antes de criar subendereços.';
+      if exists (
+        select 1
+          from public.inventory_balances b
+         where b.location_id = new.parent_id
+           and b.org_id = new.org_id
+           and b.quantity > 0
+      ) then
+        raise exception 'O endereço pai possui saldo direto. Transfira o estoque para uma posição final antes de criar subendereços.';
+      end if;
     end if;
 
     parent_cursor := new.parent_id;
