@@ -247,7 +247,7 @@ begin
 
   return new;
 end;
-$;
+$$;
 
 drop trigger if exists inventory_balances_storage_guard on public.inventory_balances;
 create trigger inventory_balances_storage_guard
