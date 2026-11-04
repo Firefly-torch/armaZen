@@ -63,6 +63,77 @@ export function getReplenishmentSuggestions(
     });
 }
 
+export type InventoryCountSession = {
+  id: string;
+  status: string;
+  created_at?: string | null;
+  completed_at?: string | null;
+};
+
+export type InventoryCountEvidence = {
+  id?: string;
+  count_id: string;
+  material_id: string;
+  location_id: string;
+  lot?: string | null;
+  difference: number | string | null;
+  created_at?: string | null;
+};
+
+/**
+ * Keeps only the most recent line for each material/location/lot combination
+ * from completed inventory sessions. Older lines stay in the audit history,
+ * but a later recount replaces them in the current accuracy KPI.
+ *
+ * The period is based on session completion time, not when the session was
+ * first opened. This prevents unfinished inventories from affecting accuracy.
+ */
+export function getLatestInventoryCountItems<T extends InventoryCountEvidence>(
+  countItems: T[],
+  sessions: InventoryCountSession[],
+  sinceTimestamp?: number,
+): T[] {
+  const completedSessions = new Map(
+    sessions
+      .filter((session) => session.status === "concluido")
+      .map((session) => [
+        session.id,
+        new Date(session.completed_at ?? session.created_at ?? "").getTime(),
+      ]),
+  );
+  const latestByStockKey = new Map<string, { item: T; completedAt: number; itemAt: number }>();
+
+  for (const item of countItems) {
+    const completedAt = completedSessions.get(item.count_id);
+    if (completedAt === undefined || !Number.isFinite(completedAt)) continue;
+    if (sinceTimestamp !== undefined && completedAt < sinceTimestamp) continue;
+
+    const stockKey = JSON.stringify([
+      item.material_id,
+      item.location_id,
+      item.lot ?? "",
+    ]);
+    const itemAt = new Date(item.created_at ?? "").getTime();
+    const candidate = { item, completedAt, itemAt: Number.isFinite(itemAt) ? itemAt : 0 };
+    const current = latestByStockKey.get(stockKey);
+
+    if (
+      !current ||
+      candidate.completedAt > current.completedAt ||
+      (candidate.completedAt === current.completedAt && candidate.itemAt > current.itemAt) ||
+      (candidate.completedAt === current.completedAt &&
+        candidate.itemAt === current.itemAt &&
+        String(candidate.item.id ?? "") > String(current.item.id ?? ""))
+    ) {
+      latestByStockKey.set(stockKey, candidate);
+    }
+  }
+
+  return [...latestByStockKey.values()]
+    .sort((a, b) => a.completedAt - b.completedAt)
+    .map(({ item }) => item);
+}
+
 export type InventoryAccuracy = {
   total: number;
   accurate: number;
