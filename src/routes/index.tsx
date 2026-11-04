@@ -963,17 +963,13 @@ function Index() {
         if (!source || !destination || source.warehouse_id !== destination.warehouse_id) {
           throw new Error("A posição de destino precisa pertencer ao mesmo armazém.");
         }
-        const { error } = await db.rpc("register_movement", {
+        const { error } = await db.rpc("transfer_legacy_parent_balance", {
           _org: orgId,
-          _type: "transferencia",
           _material: materialId,
-          _qty: quantity,
           _from: sourceLocationId,
           _to: destinationLocationId,
           _lot: lot,
-          _reference: "Regularização de saldo legado em endereço-pai",
-          _notes: "Transferência confirmada pela Gestão após conferência física do material.",
-          _request: crypto.randomUUID(),
+          _qty: quantity,
         });
         if (error) throw error;
       }, "Saldo legado transferido para a posição descendente.")}
