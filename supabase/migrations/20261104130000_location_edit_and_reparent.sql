@@ -44,9 +44,9 @@ begin
       raise exception 'O endereço pai deve pertencer à mesma organização e ao mesmo armazém.';
     end if;
 
-    -- Validate active/structural parent and direct stock only when the
-    -- hierarchy is created or changed. This avoids blocking routine edits to
-    -- legacy child locations whose parent needs later cleanup.
+    -- Validate active/structural parent only when the hierarchy changes.
+    -- Routine edits remain possible for legacy child locations whose parent
+    -- needs later cleanup. Direct legacy balances remain visible for review.
     if hierarchy_changed then
       if not p.parent_active or not p.warehouse_active then
         raise exception 'O endereço pai e seu armazém precisam estar ativos.';
