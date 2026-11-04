@@ -203,15 +203,25 @@ export const startDemoSession = createServerFn({ method: "POST" })
       ensureDemoUser(supabaseAdmin, "gestao"),
     ]);
 
-    const { error: workspaceError } = await supabaseAdmin.rpc("ensure_demo_workspace", {
+    const { data: workspaceId, error: workspaceError } = await supabaseAdmin.rpc("ensure_demo_workspace", {
       _consulta: consulta.id,
       _operacao: operacao.id,
       _gestao: gestao.id,
     });
-    if (workspaceError) {
-      console.error("[Demo] Workspace provisioning failed:", workspaceError.message);
+    if (workspaceError || !workspaceId) {
+      console.error("[Demo] Workspace provisioning failed:", workspaceError?.message ?? "No workspace id returned");
       throw new Error(
         "Não foi possível preparar os perfis demonstrativos. Confirme se a migração de demonstração do Supabase foi aplicada.",
+      );
+    }
+
+    const { error: inventoryError } = await supabaseAdmin.rpc("ensure_demo_inventory_accuracy", {
+      _org: workspaceId,
+    });
+    if (inventoryError) {
+      console.error("[Demo] Inventory demonstration provisioning failed:", inventoryError.message);
+      throw new Error(
+        "Não foi possível preparar a conferência demonstrativa. Aplique a migração de inventário demonstrativo do Supabase.",
       );
     }
 
