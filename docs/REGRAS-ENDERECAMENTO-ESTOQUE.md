@@ -10,6 +10,12 @@ Uma posição de armazenagem válida precisa:
 - não possuir endereços-filhos;
 - não estar bloqueada para que receba novas entradas ou transferências.
 
+## Ocupação dos endereços estruturais
+
+Endereços-pai não recebem saldo operacional. A ocupação apresentada neles é uma média das taxas de ocupação das posições finais descendentes que possuem capacidade cadastrada e unidade compatível com a unidade dos materiais armazenados. O cálculo é feito posição a posição: não soma kg, litros, unidades ou outras medidas diferentes. Posições sem capacidade compatível continuam no total de posições e no indicador de posições ocupadas, mas ficam fora da média percentual.
+
+A ocupação física considera saldos disponíveis, reservados e bloqueados nas posições finais. Saldo antigo registrado diretamente no endereço-pai continua separado para revisão e não é somado novamente à ocupação dos subendereços.
+
 ## Reorganização da hierarquia
 
 No mapa, arrastar um endereço sobre um endereço estrutural transfere-o para dentro desse grupo. Arrastar sobre uma posição final transfere-o para o mesmo grupo dessa posição. Arrastar entre endereços que já pertencem ao mesmo grupo continua apenas trocando suas posições visuais. A operação preserva os subendereços do item movido, atribui uma célula visual livre e impede relações circulares, mudanças entre armazéns e o uso de níveis de armazenagem como endereço-pai.
@@ -34,6 +40,18 @@ A migração não move saldos existentes automaticamente. O sistema não tem evi
 Um saldo legado diretamente em um endereço-pai não impede a edição rotineira desse endereço nem a reorganização de seus subendereços. O saldo continua destacado como “a revisar”, não se torna disponível e não é movido automaticamente. A regra impede que novos níveis de armazenagem sejam atribuídos a endereços que já possuem subendereços; para corrigir um endereço-pai legado, o nível pode ser alterado para um tipo estrutural.
 
 A migração bloqueia novas entradas, transferências de entrada e ajustes em endereços que não sejam posições finais válidas. Saídas a partir de endereços com saldo legado continuam possíveis para permitir a retirada controlada. Estornos também podem restaurar a movimentação original no endereço de origem para preservar o histórico.
+
+## Acuracidade e recontagem de inventário
+
+O indicador do dashboard usa somente a contagem concluída mais recente de cada combinação material/endereço/lote dentro do período selecionado. Uma nova contagem concluída substitui a anterior para o cálculo atual, inclusive quando corrige uma divergência. As linhas antigas continuam preservadas no histórico para auditoria. Sessões em andamento não entram no indicador. Uma contagem válida demonstra apenas as combinações efetivamente contadas; não representa automaticamente uma auditoria integral de todo o armazém.
+
+No ambiente demonstrativo, a migração cria uma conferência identificada como fictícia com 40 linhas, das quais 39 sem divergência (97,5%). Esse exemplo serve para demonstrar o KPI e a regra de recontagem; não representa uma contagem física real e não é aplicado às organizações operacionais.
+
+## Conferência e reconstrução de saldos
+
+A Gestão pode executar uma conferência que compara cada saldo de material/endereço/lote com o resultado do livro de movimentações (entradas, saídas, transferências, ajustes e estornos). A primeira etapa é somente leitura. A reconstrução exige confirmação explícita e substitui os saldos da organização pelo resultado validado do histórico, mantendo as datas de validade existentes nas combinações preservadas.
+
+A reconstrução é cancelada se o livro produzir saldo negativo em qualquer ponto cronológico, se uma movimentação apontar para material/endereço de outra organização ou se existir saldo positivo sem movimentação que o explique. Esses casos exigem investigação manual; o sistema não inventa quantidade nem corrige histórico de forma automática. Antes de executar a reconstrução em uma organização real, deve ser feito backup e a conferência deve ser revisada pela Gestão.
 
 ## Relação com Assistente de PCP
 

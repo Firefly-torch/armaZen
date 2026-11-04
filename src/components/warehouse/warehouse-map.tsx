@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { getStorageLocationIds } from "@/lib/warehouse-stock";
+import {
+  getStorageLocationIds,
+  summarizeDescendantOccupancy,
+} from "@/lib/warehouse-stock";
 import {
   ArrowDown,
   ArrowLeft,
@@ -339,6 +342,55 @@ export function WarehouseMap({
     [locations, levels, selectedWarehouseId],
   );
 
+  const descendantOccupancyByLocation = useMemo(() => {
+    const descendantIdsByParent = new Map<string, string[]>();
+
+    for (const leaf of warehouseLocations) {
+      if (!storageLocationIds.has(leaf.id)) continue;
+      let ancestorId = leaf.parent_id;
+      let depth = 0;
+      const visited = new Set<string>();
+      while (ancestorId && depth < 20 && !visited.has(ancestorId)) {
+        visited.add(ancestorId);
+        const ancestor = locationsById.get(ancestorId);
+        if (!ancestor) break;
+        const descendants = descendantIdsByParent.get(ancestorId) ?? [];
+        descendants.push(leaf.id);
+        descendantIdsByParent.set(ancestorId, descendants);
+        ancestorId = ancestor.parent_id;
+        depth += 1;
+      }
+    }
+
+    const summaries = new Map<string, ReturnType<typeof summarizeDescendantOccupancy>>();
+    for (const location of warehouseLocations) {
+      if (!(childrenByParent.get(location.id) ?? []).length) continue;
+      const descendantIds = descendantIdsByParent.get(location.id) ?? [];
+      summaries.set(location.id, summarizeDescendantOccupancy(descendantIds.map((id) => {
+        const position = locationsById.get(id);
+        const positionBalances = balancesByLocation.get(id) ?? [];
+        return {
+          capacity: position?.capacity ?? null,
+          capacity_unit: position?.capacity_unit ?? null,
+          balances: positionBalances
+            .filter((balance) => Number(balance.quantity) > 0)
+            .map((balance) => ({
+              quantity: balance.quantity,
+              unit: materialsById.get(balance.material_id)?.unit ?? null,
+            })),
+        };
+      })));
+    }
+    return summaries;
+  }, [
+    warehouseLocations,
+    storageLocationIds,
+    locationsById,
+    childrenByParent,
+    balancesByLocation,
+    materialsById,
+  ]);
+
   const totalByMaterial = useMemo(() => {
     const result = new Map<string, number>();
     for (const balance of balances) {
@@ -444,6 +496,9 @@ export function WarehouseMap({
     ? positionsByParent.get(selectedLocation.parent_id ?? null)?.get(selectedLocation.id)
     : undefined;
   const selectedBalances = selectedLocation ? getLocationBalances(selectedLocation.id) : [];
+  const selectedParentOccupancy = selectedLocation
+    ? descendantOccupancyByLocation.get(selectedLocation.id) ?? null
+    : null;
   const selectedUnitTotals = selectedLocation ? getUnitTotals(selectedLocation.id) : new Map<string, number>();
   const selectedCapacityUnit = String(selectedLocation?.capacity_unit ?? "").trim().toLowerCase();
   const capacityCompatible = Boolean(
@@ -454,10 +509,9 @@ export function WarehouseMap({
   );
   const selectedQuantity =
     selectedUnitTotals.size === 1 ? ([...selectedUnitTotals.values()][0] ?? 0) : 0;
-  const selectedOccupancy =
-    selectedLocation && storageLocationIds.has(selectedLocation.id) && selectedLocation.capacity && capacityCompatible
-      ? Math.min(100, Math.round((selectedQuantity / Number(selectedLocation.capacity)) * 100))
-      : null;
+  const selectedOccupancy = selectedLocation && storageLocationIds.has(selectedLocation.id) && selectedLocation.capacity && capacityCompatible
+    ? Math.min(100, Math.round((selectedQuantity / Number(selectedLocation.capacity)) * 100))
+    : selectedParentOccupancy?.averagePercent ?? null;
 
   const selectedPath = useMemo(() => {
     const path: LocationItem[] = [];
@@ -657,6 +711,9 @@ export function WarehouseMap({
     const materialCount = new Set(directBalances.map((balance) => balance.material_id)).size;
     const openTaskCount = tasks.filter((task) => task.location_id === location.id && task.status !== "concluida").length;
     const unitTotals = getUnitTotals(location.id);
+    const descendantOccupancy = hasChildren
+      ? descendantOccupancyByLocation.get(location.id) ?? null
+      : null;
     const capacityUnit = String(location.capacity_unit ?? "").trim().toLowerCase();
     const capacityCompatible = Boolean(
       location.capacity &&
@@ -829,13 +886,38 @@ export function WarehouseMap({
           </div>
           <div className="mt-3 grid grid-cols-2 gap-1.5">
             <div className="rounded-md border border-slate-200/80 bg-background/70 px-2 py-1.5 dark:border-slate-700">
-              <p className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">Materiais diretos</p>
+              <p className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">{hasChildren ? "Saldos diretos · a revisar" : "Materiais diretos"}</p>
               <p className="text-xs font-semibold tabular-nums">{materialCount}</p>
+              {hasChildren && directBalances.length > 0 && (
+                <p className="mt-0.5 text-[9px] text-amber-700 dark:text-amber-300">Saldo legado fora da ocupação dos subendereços</p>
+              )}
             </div>
             <div className="rounded-md border border-slate-200/80 bg-background/70 px-2 py-1.5 dark:border-slate-700">
               <p className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">{hasChildren ? "Subendereços" : "Tarefas abertas"}</p>
               <p className="text-xs font-semibold tabular-nums">{hasChildren ? children.length : openTaskCount}</p>
             </div>
+            {hasChildren && descendantOccupancy && (
+              <div className="col-span-2 rounded-md border border-slate-200/80 bg-background/70 px-2 py-1.5 dark:border-slate-700">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">Ocupação média dos subendereços</p>
+                  <p className="text-xs font-semibold tabular-nums">
+                    {descendantOccupancy.averagePercent === null ? "Não calculada" : descendantOccupancy.averagePercent + "%"}
+                  </p>
+                </div>
+                <p className="text-[10px] text-muted-foreground">
+                  {descendantOccupancy.occupiedPositions} de {descendantOccupancy.totalPositions} posições com saldo
+                  {" · "}{descendantOccupancy.measurablePositions} com capacidade compatível
+                </p>
+                {descendantOccupancy.averagePercent !== null && (
+                  <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted">
+                    <div className="h-full rounded-full bg-primary" style={{ width: descendantOccupancy.averagePercent + "%" }} />
+                  </div>
+                )}
+                {descendantOccupancy.totalPositions === 0 && (
+                  <p className="text-[10px] text-muted-foreground">Nenhuma posição final de armazenagem abaixo deste endereço.</p>
+                )}
+              </div>
+            )}
             {storageLocationIds.has(location.id) && location.capacity != null && (
               <div className="col-span-2 rounded-md border border-slate-200/80 bg-background/70 px-2 py-1.5 dark:border-slate-700">
                 <div className="flex items-center justify-between gap-2">
@@ -1208,15 +1290,17 @@ export function WarehouseMap({
               <p className="mt-1 text-sm font-semibold">{statusLabel(selectedLocation.status)}</p>
             </div>
             <div className="rounded-lg bg-muted/40 p-3">
-              <p className="text-xs text-muted-foreground">Saldo direto</p>
+              <p className="text-xs text-muted-foreground">{selectedParentOccupancy ? "Saldo direto · a revisar" : "Saldo direto"}</p>
               <p className="mt-1 text-sm font-semibold">{getQuantityLabel(selectedLocation.id)}</p>
             </div>
             <div className="rounded-lg bg-muted/40 p-3">
-              <p className="text-xs text-muted-foreground">Capacidade cadastrada</p>
+              <p className="text-xs text-muted-foreground">{selectedParentOccupancy ? "Posições descendentes" : "Capacidade cadastrada"}</p>
               <p className="mt-1 text-sm font-semibold">
-                {selectedLocation.capacity == null
-                  ? "Não configurada"
-                  : String(selectedLocation.capacity) + " " + String(selectedLocation.capacity_unit ?? "")}
+                {selectedParentOccupancy
+                  ? `${selectedParentOccupancy.totalPositions} posições · ${selectedParentOccupancy.measurablePositions} com capacidade compatível`
+                  : selectedLocation.capacity == null
+                    ? "Não configurada"
+                    : String(selectedLocation.capacity) + " " + String(selectedLocation.capacity_unit ?? "")}
               </p>
             </div>
             <div className="rounded-lg bg-muted/40 p-3">
@@ -1225,7 +1309,11 @@ export function WarehouseMap({
                 {selectedOccupancy === null ? "Não calculada" : selectedOccupancy + "%"}
               </p>
               <p className="text-[10px] text-muted-foreground">
-                {selectedOccupancy === null ? "Sem cálculo para estrutura, nível não armazenável ou capacidade/unidade incompatível" : "Cálculo baseado em uma unidade compatível"}
+                {selectedParentOccupancy
+                  ? `${selectedParentOccupancy.measurablePositions} de ${selectedParentOccupancy.totalPositions} posições com capacidade compatível; média por posição, sem somar unidades diferentes.`
+                  : selectedOccupancy === null
+                    ? "Sem capacidade compatível ou endereço não armazenável."
+                    : "Cálculo baseado na capacidade da posição e em uma unidade compatível."}
               </p>
             </div>
           </div>

@@ -119,3 +119,71 @@ export function summarizeMaterialBalances(
 
   return summaries;
 }
+
+
+export type DescendantStoragePosition = {
+  capacity: number | string | null;
+  capacity_unit: string | null;
+  balances: Array<{
+    quantity: number | string | null;
+    unit: string | null;
+  }>;
+};
+
+export type DescendantOccupancySummary = {
+  averagePercent: number | null;
+  measurablePositions: number;
+  totalPositions: number;
+  occupiedPositions: number;
+};
+
+/**
+ * Aggregates structural-parent occupancy from its final storage descendants.
+ * Percentages are averaged per position, so incompatible units (kg, L, un)
+ * are never added together. Positions without a compatible positive capacity
+ * are shown in the coverage count but omitted from the average.
+ */
+export function summarizeDescendantOccupancy(
+  positions: DescendantStoragePosition[],
+): DescendantOccupancySummary {
+  const percentages: number[] = [];
+  let occupiedPositions = 0;
+
+  for (const position of positions) {
+    const unitTotals = new Map<string, number>();
+    let positionQuantity = 0;
+    let hasUnknownUnit = false;
+
+    for (const balance of position.balances) {
+      const quantity = quantityOf(balance.quantity);
+      if (quantity <= 0) continue;
+      positionQuantity += quantity;
+      const unit = String(balance.unit ?? "").trim().toLocaleLowerCase("pt-BR");
+      if (!unit) {
+        hasUnknownUnit = true;
+        continue;
+      }
+      unitTotals.set(unit, (unitTotals.get(unit) ?? 0) + quantity);
+    }
+
+    if (positionQuantity > 0) occupiedPositions += 1;
+
+    const capacity = Number(position.capacity ?? 0);
+    const capacityUnit = String(position.capacity_unit ?? "").trim().toLocaleLowerCase("pt-BR");
+    if (!Number.isFinite(capacity) || capacity <= 0 || !capacityUnit || hasUnknownUnit) continue;
+    if (unitTotals.size > 1) continue;
+    if (unitTotals.size === 1 && !unitTotals.has(capacityUnit)) continue;
+
+    const compatibleQuantity = unitTotals.size === 0 ? 0 : unitTotals.get(capacityUnit) ?? 0;
+    percentages.push(Math.min(100, (compatibleQuantity / capacity) * 100));
+  }
+
+  return {
+    averagePercent: percentages.length
+      ? Math.round(percentages.reduce((sum, value) => sum + value, 0) / percentages.length)
+      : null,
+    measurablePositions: percentages.length,
+    totalPositions: positions.length,
+    occupiedPositions,
+  };
+}
