@@ -368,6 +368,9 @@ function Index() {
   const [exportToDate, setExportToDate] = useState("");
   const [exportMissingValues, setExportMissingValues] = useState(0);
   const [exportMissingRequired, setExportMissingRequired] = useState(0);
+  const [balanceAuditRows, setBalanceAuditRows] = useState<AnyRow[]>([]);
+  const [balanceAuditPerformed, setBalanceAuditPerformed] = useState(false);
+  const [balanceAuditApplied, setBalanceAuditApplied] = useState(false);
 
   useEffect(() => {
     setSelectedFields(datasets[exportForm.dataset]?.fields ?? []);
@@ -547,6 +550,34 @@ function Index() {
     catch (e) { fail(e); }
     finally { setSaving(false); }
   };
+  const inspectBalanceLedger = () => void runSave(async () => {
+    const { data, error } = await db.rpc("reconcile_inventory_balances", {
+      _org: orgId,
+      _apply: false,
+    });
+    if (error) throw error;
+    setBalanceAuditRows(data ?? []);
+    setBalanceAuditPerformed(true);
+    setBalanceAuditApplied(false);
+  }, "Conferência do livro de movimentações concluída.");
+
+  const rebuildBalancesFromLedger = () => {
+    if (!balanceAuditPerformed || !balanceAuditRows.length) return;
+    const confirmed = window.confirm(
+      "Reconstruir os saldos usando o histórico completo de movimentações? A operação atualiza somente os saldos divergentes. O histórico de movimentações e de inventários será preservado. Se o livro contiver saldos negativos ou saldos positivos sem movimentação, a reconstrução será cancelada."
+    );
+    if (!confirmed) return;
+    void runSave(async () => {
+      const { data, error } = await db.rpc("reconcile_inventory_balances", {
+        _org: orgId,
+        _apply: true,
+      });
+      if (error) throw error;
+      setBalanceAuditRows(data ?? []);
+      setBalanceAuditApplied(true);
+    }, "Saldos reconstruídos a partir do histórico de movimentações.");
+  };
+
   const statusPill = (text: string) => <span className="rounded-full bg-muted px-2.5 py-1 text-xs font-medium">{text.replaceAll("_", " ")}</span>;
 
   const countAccuracyDetail = totals.countAccuracy
@@ -1020,6 +1051,47 @@ function Index() {
   };
 
   const materialsSection = <div className="space-y-5">
+    {canManage && <Panel title="Conferência dos saldos" description="Compara o saldo atual de cada material/endereço/lote com o saldo reconstruído pelo livro de entradas, saídas, transferências, ajustes e estornos.">
+      <div className="flex flex-wrap items-center gap-2">
+        <button type="button" disabled={saving} onClick={inspectBalanceLedger} className="h-9 rounded-lg border px-3 text-sm font-medium">
+          Verificar saldos
+        </button>
+        <button type="button" disabled={saving || !balanceAuditPerformed || balanceAuditRows.length === 0 || balanceAuditApplied} onClick={rebuildBalancesFromLedger} className="h-9 rounded-lg bg-primary px-3 text-sm font-semibold text-primary-foreground disabled:opacity-50">
+          Reconstruir pelo histórico
+        </button>
+        {balanceAuditPerformed && <span className="text-xs text-muted-foreground">
+          {balanceAuditApplied ? "Reconstrução executada" : balanceAuditRows.length ? `${balanceAuditRows.length} divergência(s) encontrada(s)` : "Nenhuma divergência encontrada"}
+        </span>}
+      </div>
+      <p className="mt-2 text-xs text-muted-foreground">
+        A verificação não altera os saldos. A reconstrução preserva o histórico e as datas de validade já cadastradas. Ela é bloqueada quando encontra saldo negativo no histórico ou saldo positivo sem movimentação correspondente.
+      </p>
+      {balanceAuditPerformed && !balanceAuditRows.length && (
+        <p className="mt-3 rounded-lg border border-emerald-300/60 bg-emerald-50/60 p-3 text-sm text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200">
+          {balanceAuditApplied ? "A reconstrução foi executada; os saldos agora correspondem ao livro de movimentações." : "Os saldos atuais correspondem ao livro de movimentações."}
+        </p>
+      )}
+      {balanceAuditRows.length > 0 && (
+        <>
+          <p className="mt-3 text-xs text-muted-foreground">
+            {balanceAuditApplied
+              ? "Relatório das divergências corrigidas na reconstrução."
+              : "Divergências entre a quantidade registrada e o resultado do histórico. Confira este relatório antes de reconstruir."}
+          </p>
+          <Table
+            headers={["Material","Endereço","Lote","Saldo atual","Pelo histórico","Diferença"]}
+            rows={balanceAuditRows.map((row) => [
+              materials.find((material) => material.id === row.material_id)?.code ?? "Material",
+              locations.find((location) => location.id === row.location_id)?.code ?? "Endereço",
+              row.lot || "—",
+              row.recorded_quantity,
+              row.ledger_quantity,
+              <span className="font-semibold text-amber-700 dark:text-amber-300">{row.difference}</span>,
+            ])}
+          />
+        </>
+      )}
+    </Panel>}
     <Panel title="Planejamento de reposição" description="A necessidade estimada usa somente saldos disponíveis em posições finais de armazenagem ativas. Reservas, bloqueios, endereços inativos e saldos em revisão não são tratados como disponibilidade.">
       {allReplenishmentSuggestions.length ? <Table headers={["Código","Material","Disponível","Estoque mínimo","Necessidade estimada"]} rows={allReplenishmentSuggestions.map((item) => [
         item.code,
