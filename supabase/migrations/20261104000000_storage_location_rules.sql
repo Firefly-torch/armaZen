@@ -127,6 +127,9 @@ begin
   if m.status <> 'ativo' and _type <> 'estorno' then
     raise exception 'Material % está inativo.', m.code;
   end if;
+  if m.tracks_lot and v_lot = '' and _type <> 'estorno' then
+    raise exception 'O material % exige identificação de lote.', m.code;
+  end if;
 
   if _type in ('saida', 'transferencia')
      or (_type = 'estorno' and _from is not null) then
@@ -216,6 +219,16 @@ as $$
 begin
   if not public.has_org_role(_org, 'operacao') then
     raise exception 'Sem permissão para registrar ajustes.';
+  end if;
+
+  if exists (
+    select 1
+      from public.materials m
+     where m.id = _material
+       and m.org_id = _org
+       and m.tracks_lot
+  ) and coalesce(trim(_lot), '') = '' then
+    raise exception 'Este material exige identificação de lote.';
   end if;
 
   if not public.is_storage_location(_org, _location) then
