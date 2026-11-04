@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { WarehouseMap } from "@/components/warehouse/warehouse-map";
 import { supabase } from "@/integrations/supabase/client";
+import { getInventoryAccuracy, getReplenishmentSuggestions } from "@/lib/dashboard-metrics";
 import { startDemoSession, type DemoRole } from "@/integrations/supabase/admin-auth";
 import type { User } from "@supabase/supabase-js";
 
@@ -351,6 +352,7 @@ function Index() {
   const [locForm, setLocForm] = useState({ id:"", warehouse_id:"", level_id:"", parent_id:"", code:"", name:"", status:"disponivel", capacity:"", capacity_unit:"un", notes:"" });
   const [matForm, setMatForm] = useState({ id:"", code:"", description:"", category:"Geral", unit:"un", barcode:"", min_stock:"0", status:"ativo", tracks_lot:false, attributes:"{}" });
   const [moveForm, setMoveForm] = useState({ type:"entrada", material_id:"", quantity:"1", from_location_id:"", to_location_id:"", lot:"", reference:"", reason:"", notes:"" });
+  const [returnForm, setReturnForm] = useState({ material_id:"", quantity:"1", destination_location_id:"", lot:"", work_name:"", condition:"apto", notes:"" });
   const [taskForm, setTaskForm] = useState({ id:"", title:"", description:"", type:"recebimento", priority:"media", status:"a_fazer", assignee_id:"", due_at:"", material_id:"", location_id:"" });
   const [memberForm, setMemberForm] = useState({ email:"", role:"operacao" });
   const [exportForm, setExportForm] = useState({ dataset:"materials", format:"csv", template_id:"", template_name:"", delimiter:";", date_format:"ISO" });
@@ -376,7 +378,8 @@ function Index() {
     }
   }, [inventorySessions, selectedInventoryId]);
 
-  // Warehouse-scoped, unit-aware indicators; never add kg, L and units together.
+  // Indicadores limitados ao armazém e ao período selecionados.
+  // Quantidades são sempre somadas por unidade de medida, nunca entre unidades incompatíveis.
   const totals = useMemo(() => {
     const scopedLocations = locations.filter((location) =>
       dashboardWarehouseId === "todos" || location.warehouse_id === dashboardWarehouseId
@@ -385,14 +388,17 @@ function Index() {
     const scopedBalances = balances.filter((balance) =>
       dashboardWarehouseId === "todos" || scopedLocationIds.has(balance.location_id)
     );
-    const balanceByMaterial = new Map<string, number>();
+    const availableLocationIds = new Set(scopedLocations
+      .filter((location) => location.active && location.status === "disponivel")
+      .map((location) => location.id));
+    const availableBalances = scopedBalances.filter((balance) => availableLocationIds.has(balance.location_id));
     const quantityByUnit = new Map<string, number>();
     scopedBalances.forEach((balance) => {
       const quantity = Number(balance.quantity || 0);
-      balanceByMaterial.set(balance.material_id, (balanceByMaterial.get(balance.material_id) ?? 0) + quantity);
       const unit = materials.find((material) => material.id === balance.material_id)?.unit || "un";
       quantityByUnit.set(unit, (quantityByUnit.get(unit) ?? 0) + quantity);
     });
+
     const since = Date.now() - Number(period) * 86400000;
     const scopedMovementsAll = movements.filter((movement) =>
       dashboardWarehouseId === "todos" ||
@@ -402,6 +408,12 @@ function Index() {
     const scopedMovements = scopedMovementsAll.filter((movement) =>
       new Date(movement.created_at).getTime() >= since
     );
+    const scopedCounts = counts.filter((item) =>
+      new Date(item.created_at).getTime() >= since &&
+      (dashboardWarehouseId === "todos" || scopedLocationIds.has(item.location_id))
+    );
+    const countAccuracy = getInventoryAccuracy(scopedCounts);
+    const lowStockItems = getReplenishmentSuggestions(materials, availableBalances);
     const scopedTasks = tasks.filter((task) =>
       dashboardWarehouseId === "todos" ||
       (task.location_id != null && scopedLocationIds.has(task.location_id))
@@ -417,6 +429,7 @@ function Index() {
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([unit, quantity]) => `${new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 2 }).format(quantity)} ${unit}`)
       .join(" · ");
+
     const movementDays = Array.from({ length: 7 }, (_, index) => {
       const date = new Date();
       date.setHours(0, 0, 0, 0);
@@ -424,41 +437,54 @@ function Index() {
       const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
       return {
         label: date.toLocaleDateString("pt-BR", { weekday: "short" }),
-        count: movements.filter((movement) => {
-          if (dashboardWarehouseId !== "todos" &&
-              !scopedLocationIds.has(movement.from_location_id) &&
-              !scopedLocationIds.has(movement.to_location_id)) return false;
+        count: scopedMovementsAll.filter((movement) => {
           const created = new Date(movement.created_at);
           const movementKey = `${created.getFullYear()}-${String(created.getMonth() + 1).padStart(2, "0")}-${String(created.getDate()).padStart(2, "0")}`;
           return movementKey === key;
         }).length,
       };
     });
+
     return {
       materials: materials.filter((material) => material.status === "ativo" || material.status === "active").length,
       locations: scopedLocations.filter((location) => location.active).length,
       units: unitSummary || "0",
-      lowStock: materials.filter((material) =>
-        (material.status === "ativo" || material.status === "active") &&
-        (balanceByMaterial.get(material.id) ?? 0) < Number(material.min_stock || 0)
-      ).length,
+      lowStock: lowStockItems.length,
+      lowStockItems,
       movements: scopedMovements.length,
       movementTypeCounts: ["entrada", "saida", "transferencia", "ajuste", "estorno"].map((type) => ({
         type,
-        count: scopedMovementsAll.filter((movement) => movement.type === type).length,
+        count: scopedMovements.filter((movement) => movement.type === type).length,
       })),
+      returns: scopedMovements.filter((movement) =>
+        movement.type === "entrada" && String(movement.reference ?? "").startsWith("Devolução de obra:")
+      ).length,
       pending: open.length,
       overdue: open.filter((task) => task.due_at && new Date(task.due_at).getTime() < Date.now()).length,
-      divergences: counts.filter((item) =>
-        Number(item.difference) !== 0 &&
-        (dashboardWarehouseId === "todos" || scopedLocationIds.has(item.location_id))
-      ).length,
+      divergences: countAccuracy?.divergent ?? 0,
+      countAccuracy,
+      taskStatusCounts: taskStatuses.map((status) => ({
+        status,
+        count: scopedTasks.filter((task) => task.status === status).length,
+      })),
+      locationStatusCounts: locationStatuses.map((status) => ({
+        status,
+        count: scopedLocations.filter((location) => location.active && location.status === status).length,
+      })),
       occupancy: storageLocations.length ? Math.round((occupiedLocations / storageLocations.length) * 100) : null,
       occupiedLocations,
       storageLocations: storageLocations.length,
       movementDays,
     };
   }, [materials, locations, levels, balances, movements, tasks, counts, period, dashboardWarehouseId]);
+
+  const allReplenishmentSuggestions = useMemo(() => {
+    const availableLocationIds = new Set(locations
+      .filter((location) => location.active && location.status === "disponivel")
+      .map((location) => location.id));
+    const availableBalances = balances.filter((balance) => availableLocationIds.has(balance.location_id));
+    return getReplenishmentSuggestions(materials, availableBalances);
+  }, [materials, balances, locations]);
 
   const selectedMapWarehouseId = mapWarehouseId && warehouses.some((warehouse) => warehouse.id === mapWarehouseId && warehouse.active)
     ? mapWarehouseId
@@ -513,49 +539,177 @@ function Index() {
   };
   const statusPill = (text: string) => <span className="rounded-full bg-muted px-2.5 py-1 text-xs font-medium">{text.replaceAll("_", " ")}</span>;
 
-  const dashboard = <div className="space-y-6">
-    <div className="flex flex-wrap items-end justify-between gap-3">
-      <div><h2 className="text-base font-semibold">Indicadores operacionais</h2><p className="mt-1 text-sm text-muted-foreground">Indicadores calculados a partir dos dados salvos no Supabase.</p></div>
-      <div className="flex flex-wrap items-end gap-2">
-        <SelectField label="Período" value={period} onChange={setPeriod} options={[{value:"7",label:"7 dias"},{value:"30",label:"30 dias"},{value:"90",label:"90 dias"}]} />
-        <SelectField label="Armazém" value={dashboardWarehouseId} onChange={setDashboardWarehouseId} options={[{value:"todos",label:"Todos os armazéns"},...warehouses.filter(w=>w.active).map(w=>({value:w.id,label:w.name}))]} />
-        <button onClick={refresh} disabled={loading} className="flex h-10 items-center gap-2 rounded-lg border px-3 text-sm"><RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} /> Atualizar</button>
+  const countAccuracyDetail = totals.countAccuracy
+    ? `${totals.countAccuracy.accurate.toLocaleString("pt-BR")} de ${totals.countAccuracy.total.toLocaleString("pt-BR")} linhas contadas sem divergência`
+    : "Nenhuma contagem registrada no período";
+  const dashboardLocationIds = new Set(locations
+    .filter((location) => dashboardWarehouseId === "todos" || location.warehouse_id === dashboardWarehouseId)
+    .map((location) => location.id));
+  const dashboardMovements = movements.filter((movement) =>
+    (dashboardWarehouseId === "todos" ||
+      dashboardLocationIds.has(movement.from_location_id) ||
+      dashboardLocationIds.has(movement.to_location_id))
+  );
+  const dashboardTasks = tasks.filter((task) =>
+    dashboardWarehouseId === "todos" ||
+    (task.location_id != null && dashboardLocationIds.has(task.location_id))
+  );
+  const dashboardNumber = (value: number) => new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 3 }).format(value);
+
+  const dashboard = <div className="space-y-5">
+    <section className="overflow-hidden rounded-2xl border bg-card shadow-sm">
+      <div className="flex flex-col gap-4 bg-gradient-to-r from-[#30396f] via-[#404890] to-[#5863ad] p-5 text-white sm:p-6 xl:flex-row xl:items-end xl:justify-between">
+        <div className="max-w-2xl">
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-white/70">Planejamento e controle de materiais</p>
+          <h2 className="mt-2 text-2xl font-bold tracking-tight sm:text-3xl">Visão geral do estoque</h2>
+          <p className="mt-2 max-w-xl text-sm leading-6 text-white/80">Acompanhe disponibilidade, divergências, necessidades de reposição e atividades que exigem atenção.</p>
+        </div>
+        <div className="flex flex-wrap items-end gap-2">
+          <div className="min-w-[145px]">
+            <label className="mb-1 block text-xs font-medium text-white/80">Período de análise</label>
+            <select className="h-10 w-full rounded-lg border border-white/20 bg-white/10 px-3 text-sm text-white outline-none focus:ring-2 focus:ring-white/60 [&_option]:text-foreground" value={period} onChange={(event) => setPeriod(event.target.value)}>
+              <option value="7">Últimos 7 dias</option><option value="30">Últimos 30 dias</option><option value="90">Últimos 90 dias</option>
+            </select>
+          </div>
+          <div className="min-w-[170px]">
+            <label className="mb-1 block text-xs font-medium text-white/80">Armazém</label>
+            <select className="h-10 w-full rounded-lg border border-white/20 bg-white/10 px-3 text-sm text-white outline-none focus:ring-2 focus:ring-white/60 [&_option]:text-foreground" value={dashboardWarehouseId} onChange={(event) => setDashboardWarehouseId(event.target.value)}>
+              <option value="todos">Todos os armazéns</option>
+              {warehouses.filter((warehouse) => warehouse.active).map((warehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.name}</option>)}
+            </select>
+          </div>
+          <button onClick={refresh} disabled={loading} className="flex h-10 items-center gap-2 rounded-lg border border-white/25 bg-white/10 px-3 text-sm font-semibold transition-colors hover:bg-white/20 disabled:opacity-60">
+            <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} /> Atualizar
+          </button>
+        </div>
       </div>
+      <div className="flex flex-wrap items-center justify-between gap-2 border-t bg-muted/30 px-5 py-3 text-xs text-muted-foreground sm:px-6">
+        <span>Dados registrados no Supabase · análise dos últimos {period} dias</span>
+        <span>Unidades de medida permanecem separadas nos totais de estoque.</span>
+      </div>
+    </section>
+
+    <section>
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div><h2 className="font-semibold">Pontos de atenção</h2><p className="text-xs text-muted-foreground">Os números abaixo ajudam a identificar onde agir primeiro.</p></div>
+        <span className="text-[11px] text-muted-foreground">Escopo filtrado</span>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {[
+          { label: "Materiais com saldo disponível abaixo do mínimo", value: totals.lowStock, detail: "Avaliar reposição", Icon: AlertTriangle, tone: "border-amber-200 bg-amber-50/70 text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200" },
+          { label: "Divergências de inventário", value: totals.divergences, detail: "Linhas com diferença no período", Icon: ClipboardCheck, tone: "border-orange-200 bg-orange-50/70 text-orange-800 dark:border-orange-900 dark:bg-orange-950/30 dark:text-orange-200" },
+          { label: "Tarefas atrasadas", value: totals.overdue, detail: "Atividades abertas com prazo vencido", Icon: CalendarClock, tone: "border-red-200 bg-red-50/70 text-red-800 dark:border-red-900 dark:bg-red-950/30 dark:text-red-200" },
+          { label: "Acuracidade das contagens", value: totals.countAccuracy ? `${totals.countAccuracy.percentage.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%` : "—", detail: countAccuracyDetail, Icon: CheckCircle2, tone: "border-emerald-200 bg-emerald-50/70 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200" },
+        ].map(({ label, value, detail, Icon, tone }) => <article key={label} className="flex min-h-32 items-start gap-3 rounded-xl border bg-card p-4 shadow-sm">
+          <span className={`mt-0.5 rounded-xl border p-2.5 ${tone}`}><Icon className="h-5 w-5" /></span>
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-muted-foreground">{label}</p>
+            <p className="mt-1 text-3xl font-bold tracking-tight tabular-nums">{orgId ? value : "—"}</p>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">{detail}</p>
+          </div>
+        </article>)}
+      </div>
+      <p className="mt-2 text-[11px] text-muted-foreground">A acuracidade representa a proporção de linhas de contagem sem diferença (diferença igual a zero), não uma auditoria integral de todo o estoque. O histórico considerado corresponde aos registros carregados pelo aplicativo.</p>
+    </section>
+
+    <div className="grid gap-4 xl:grid-cols-[1.45fr_1fr]">
+      <Panel title="Necessidade de reposição" description="Materiais com saldo em endereços ativos e disponíveis abaixo do estoque mínimo. A quantidade sugerida recompõe o mínimo; não gera pedido de compra.">
+        {totals.lowStockItems.length ? <>
+          <Table headers={["Material","Saldo atual","Estoque mínimo","Para atingir o mínimo"]} rows={totals.lowStockItems.slice(0,6).map((item) => [
+            <div><p className="font-semibold">{item.code}</p><p className="text-xs text-muted-foreground">{item.description}</p></div>,
+            `${dashboardNumber(item.currentQuantity)} ${item.unit}`,
+            `${dashboardNumber(item.minimumQuantity)} ${item.unit}`,
+            <span className="font-semibold text-amber-700 dark:text-amber-300">+{dashboardNumber(item.suggestedQuantity)} {item.unit}</span>,
+          ])}/>
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs text-muted-foreground">{totals.lowStock} material(is) abaixo do mínimo no escopo selecionado.</p>
+            <button type="button" className="text-sm font-semibold text-primary hover:underline" onClick={() => { setSection("materials"); setSearch(""); }}>Ver planejamento completo <span aria-hidden="true">→</span></button>
+          </div>
+        </> : <Empty>{orgId ? "Nenhum material ativo está abaixo do estoque mínimo neste escopo." : "Aguardando dados da organização."}</Empty>}
+      </Panel>
+
+      <Panel title="Ocupação dos endereços" description="Posições de armazenagem ocupadas em relação ao total de posições ativas.">
+        <div className="flex items-end justify-between gap-3">
+          <div><p className="text-4xl font-bold tracking-tight tabular-nums">{totals.occupancy === null ? "—" : `${totals.occupancy}%`}</p><p className="mt-1 text-xs text-muted-foreground">{totals.occupiedLocations} de {totals.storageLocations} posições ocupadas</p></div>
+          <span className="rounded-xl bg-primary/10 p-3 text-primary"><Warehouse className="h-6 w-6"/></span>
+        </div>
+        <div className="mt-5 h-3 overflow-hidden rounded-full bg-muted">
+          <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${totals.occupancy ?? 0}%` }} />
+        </div>
+        <div className="mt-4 grid grid-cols-2 gap-2 text-sm">
+          <div className="rounded-lg bg-muted/50 p-3"><p className="text-xs text-muted-foreground">Materiais ativos</p><p className="mt-1 text-xl font-semibold tabular-nums">{totals.materials}</p></div>
+          <div className="rounded-lg bg-muted/50 p-3"><p className="text-xs text-muted-foreground">Endereços ativos</p><p className="mt-1 text-xl font-semibold tabular-nums">{totals.locations}</p></div>
+        </div>
+        <div className="mt-4 space-y-2">
+          {totals.locationStatusCounts.map(({ status, count }) => <div key={status} className="flex items-center justify-between text-xs">
+            <span className="capitalize text-muted-foreground">{status.replaceAll("_"," ")}</span><span className="font-semibold tabular-nums">{count}</span>
+          </div>)}
+        </div>
+      </Panel>
     </div>
-    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+
+    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
       {[
-        ["Materiais ativos", totals.materials, Package],
-        ["Endereços ativos", totals.locations, MapPinned],
-        ["Saldo por unidade", totals.units, Boxes],
-        ["Ocupação de posições", totals.occupancy === null ? "Sem posições de armazenagem" : `${totals.occupancy}% · ${totals.occupiedLocations}/${totals.storageLocations}`, Warehouse],
-        ["Abaixo do mínimo", totals.lowStock, AlertTriangle],
-        [`Movimentações (${period} dias)`, totals.movements, Activity],
-        ["Tarefas em aberto", totals.pending, ClipboardList],
-        ["Tarefas atrasadas", totals.overdue, AlertTriangle],
-        ["Divergências registradas", totals.divergences, CheckCircle2],
-      ].map(([label, value, Icon]: any) => <article key={String(label)} className="rounded-xl border bg-card p-5 shadow-sm"><div className="flex items-center justify-between gap-2"><p className="text-sm text-muted-foreground">{label}</p><span className="rounded-lg bg-primary/10 p-2 text-primary"><Icon className="h-4 w-4" /></span></div><p className="mt-4 break-words text-2xl font-semibold">{orgId ? value : "—"}</p></article>)}
+        { label: `Movimentações · ${period} dias`, value: totals.movements, Icon: ArrowLeftRight, detail: "Registros no período" },
+        { label: "Tarefas em aberto", value: totals.pending, Icon: ClipboardList, detail: "Atividades não concluídas" },
+        { label: `Devoluções de obras · ${period} dias`, value: totals.returns, Icon: CheckCircle2, detail: "Entradas identificadas como devolução" },
+        { label: "Saldo por unidade", value: totals.units, Icon: Boxes, detail: "Totais separados por unidade de medida" },
+      ].map(({ label, value, Icon, detail }) => <article key={label} className="rounded-xl border bg-card p-4 shadow-sm">
+        <div className="flex items-center justify-between gap-2"><p className="text-xs font-medium text-muted-foreground">{label}</p><Icon className="h-4 w-4 text-primary"/></div>
+        <p className="mt-3 break-words text-xl font-bold tabular-nums">{orgId ? value : "—"}</p>
+        <p className="mt-1 text-[11px] text-muted-foreground">{detail}</p>
+      </article>)}
     </div>
 
     <div className="grid gap-4 xl:grid-cols-3">
-      <Panel title="Movimentações por tipo" description="Distribuição por tipo no armazém selecionado.">
-        {totals.movementTypeCounts.map(({type}: any)=>{const count=totals.movementTypeCounts.find((item: AnyRow)=>item.type===type)?.count??0;const max=Math.max(1,...totals.movementTypeCounts.map((item: AnyRow)=>item.count));return <div key={type} className="mb-3"><div className="mb-1 flex justify-between gap-2 text-sm"><span className="capitalize">{type}</span><span>{count}</span></div><div className="h-2 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-primary" style={{width:`${count/max*100}%`}}/></div></div>;})}
+      <Panel title="Movimentações por tipo" description={`Distribuição dos registros nos últimos ${period} dias.`}>
+        {totals.movementTypeCounts.every((item) => item.count === 0) ? <Empty>Sem movimentações no período selecionado.</Empty> : totals.movementTypeCounts.map(({ type, count }) => {
+          const max = Math.max(1, ...totals.movementTypeCounts.map((item) => item.count));
+          return <div key={type} className="mb-3 last:mb-0">
+            <div className="mb-1 flex justify-between gap-2 text-sm"><span className="capitalize">{type.replaceAll("_"," ")}</span><span className="font-semibold tabular-nums">{count}</span></div>
+            <div className="h-2.5 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-primary" style={{ width: `${count / max * 100}%` }}/></div>
+          </div>;
+        })}
       </Panel>
-      <Panel title="Situação das tarefas" description="Distribuição das tarefas no escopo selecionado.">
-        {taskStatuses.map(status=>{const relevantTasks=tasks.filter(t=>(dashboardWarehouseId==="todos"||(t.location_id&&locations.some(l=>l.id===t.location_id&&l.warehouse_id===dashboardWarehouseId)))&&t.status===status);const count=relevantTasks.length;const max=Math.max(1,...taskStatuses.map(s=>tasks.filter(t=>(dashboardWarehouseId==="todos"||(t.location_id&&locations.some(l=>l.id===t.location_id&&l.warehouse_id===dashboardWarehouseId)))&&t.status===s).length));return <div key={status} className="mb-3"><div className="mb-1 flex justify-between gap-2 text-sm"><span>{status.replaceAll("_"," ")}</span><span>{count}</span></div><div className="h-2 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-primary" style={{width:`${count/max*100}%`}}/></div></div>;})}
+      <Panel title="Situação das tarefas" description="Distribuição das atividades no armazém selecionado.">
+        {totals.taskStatusCounts.every((item) => item.count === 0) ? <Empty>Sem tarefas cadastradas neste escopo.</Empty> : totals.taskStatusCounts.map(({ status, count }) => {
+          const max = Math.max(1, ...totals.taskStatusCounts.map((item) => item.count));
+          return <div key={status} className="mb-3 last:mb-0">
+            <div className="mb-1 flex justify-between gap-2 text-sm"><span>{status.replaceAll("_"," ")}</span><span className="font-semibold tabular-nums">{count}</span></div>
+            <div className="h-2.5 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-primary" style={{ width: `${count / max * 100}%` }}/></div>
+          </div>;
+        })}
       </Panel>
-      <Panel title="Situação dos endereços" description="Contagem dos estados cadastrados, não capacidade física.">
-        {locationStatuses.map(status=>{const count=locations.filter(l=>l.active&&(dashboardWarehouseId==="todos"||l.warehouse_id===dashboardWarehouseId)&&l.status===status).length;const max=Math.max(1,...locationStatuses.map(s=>locations.filter(l=>l.active&&(dashboardWarehouseId==="todos"||l.warehouse_id===dashboardWarehouseId)&&l.status===s).length));return <div key={status} className="mb-3"><div className="mb-1 flex justify-between gap-2 text-sm"><span>{status.replaceAll("_"," ")}</span><span>{count}</span></div><div className="h-2 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-primary" style={{width:`${count/max*100}%`}}/></div></div>;})}
+      <Panel title="Movimentações recentes" description="Últimos registros persistidos no escopo selecionado.">
+        <Table headers={["Nº","Tipo","Material","Quantidade","Data"]} rows={dashboardMovements.slice(0,5).map((movement) => [
+          pretty(movement.number),
+          String(movement.reference ?? "").startsWith("Devolução de obra:") ? <span className="rounded-full bg-emerald-100 px-2 py-1 text-xs font-medium text-emerald-800">Devolução</span> : statusPill(movement.type),
+          pretty(materials.find((material) => material.id === movement.material_id)?.code),
+          `${pretty(movement.quantity)} ${materials.find((material) => material.id === movement.material_id)?.unit ?? ""}`,
+          dateLabel(movement.created_at),
+        ])}/>
       </Panel>
     </div>
+
     <Panel title="Movimentações nos últimos 7 dias" description="Quantidade de registros por dia; não representa volume físico movimentado.">
       <div className="grid grid-cols-7 gap-2 sm:gap-4">
-        {totals.movementDays.map((day: AnyRow)=>{const max=Math.max(1,...totals.movementDays.map((item: AnyRow)=>item.count));return <div key={day.label} className="flex min-w-0 flex-col items-center gap-2"><span className="text-xs font-medium tabular-nums">{day.count}</span><div className="flex h-24 w-full items-end rounded-md bg-muted p-1"><div className="w-full rounded-sm bg-primary transition-all" style={{height:`${Math.max(day.count===0?0:8,day.count/max*100)}%`}}/></div><span className="text-[10px] capitalize text-muted-foreground sm:text-xs">{day.label}</span></div>;})}
+        {totals.movementDays.map((day) => {
+          const max = Math.max(1, ...totals.movementDays.map((item) => item.count));
+          return <div key={day.label} className="flex min-w-0 flex-col items-center gap-2">
+            <span className="text-xs font-medium tabular-nums">{day.count}</span>
+            <div className="flex h-24 w-full items-end rounded-md bg-muted p-1"><div className="w-full rounded-sm bg-primary transition-all" style={{ height: `${Math.max(day.count === 0 ? 0 : 8, day.count / max * 100)}%` }}/></div>
+            <span className="text-[10px] capitalize text-muted-foreground sm:text-xs">{day.label}</span>
+          </div>;
+        })}
       </div>
     </Panel>
-    <div className="grid gap-4 xl:grid-cols-2">
-      <Panel title="Movimentações recentes" description="Últimos registros persistidos no escopo selecionado."><Table headers={["Nº","Tipo","Material","Quantidade","Data"]} rows={movements.filter(m=>dashboardWarehouseId==="todos"||locations.some(l=>l.warehouse_id===dashboardWarehouseId&&(l.id===m.from_location_id||l.id===m.to_location_id))).slice(0,6).map(m => [pretty(m.number), statusPill(m.type), pretty(materials.find(x=>x.id===m.material_id)?.code), `${pretty(m.quantity)} ${materials.find(x=>x.id===m.material_id)?.unit??""}`, dateLabel(m.created_at)])} /></Panel>
-      <Panel title="Tarefas prioritárias" description="Tarefas abertas, incluindo prazos vencidos."><Table headers={["Tarefa","Prioridade","Status","Prazo"]} rows={tasks.filter(t=>(dashboardWarehouseId==="todos"||(t.location_id&&locations.some(l=>l.id===t.location_id&&l.warehouse_id===dashboardWarehouseId)))&&t.status!=="concluida").sort((a,b)=>Number(new Date(a.due_at||"9999").getTime())-Number(new Date(b.due_at||"9999").getTime())).slice(0,6).map(t=>[t.title,statusPill(t.priority),statusPill(t.status),dateLabel(t.due_at)])} /></Panel>
-    </div>
+
+    <Panel title="Tarefas prioritárias" description="Atividades abertas, ordenadas pelo prazo mais próximo.">
+      <Table headers={["Tarefa","Prioridade","Status","Prazo"]} rows={dashboardTasks.filter((task) => task.status !== "concluida")
+        .sort((a, b) => new Date(a.due_at || "9999-12-31").getTime() - new Date(b.due_at || "9999-12-31").getTime())
+        .slice(0,6)
+        .map((task) => [task.title, statusPill(task.priority), statusPill(task.status), dateLabel(task.due_at)])}/>
+    </Panel>
   </div>;
 
   const addressSearch = search.trim().toLocaleLowerCase("pt-BR");
@@ -733,6 +887,15 @@ function Index() {
   </div>;
 
   const materialsSection = <div className="space-y-5">
+    <Panel title="Planejamento de reposição" description="Lista de materiais com saldo em endereços ativos e disponíveis abaixo do mínimo. Endereços bloqueados, reservados ou inativos não entram no saldo considerado. A quantidade não considera compras pendentes ou demandas ainda não registradas.">
+      {allReplenishmentSuggestions.length ? <Table headers={["Código","Material","Saldo atual","Estoque mínimo","Necessidade estimada"]} rows={allReplenishmentSuggestions.map((item) => [
+        item.code,
+        item.description,
+        `${dashboardNumber(item.currentQuantity)} ${item.unit}`,
+        `${dashboardNumber(item.minimumQuantity)} ${item.unit}`,
+        <span className="font-semibold text-amber-700 dark:text-amber-300">+{dashboardNumber(item.suggestedQuantity)} {item.unit}</span>,
+      ])}/> : <Empty>Nenhum material ativo está abaixo do estoque mínimo cadastrado.</Empty>}
+    </Panel>
     <Panel title={matForm.id?"Editar material":"Cadastrar material"} description="Os saldos são lidos de inventory_balances; não são editados diretamente nesta tela.">
       {canManage?<form className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4" onSubmit={e=>{e.preventDefault();void runSave(async()=>{let storedAttrs:AnyRow={};try{storedAttrs=JSON.parse(matForm.attributes||"{}");if(!storedAttrs||Array.isArray(storedAttrs)||typeof storedAttrs!=="object")throw new Error();}catch{throw new Error("Os atributos já salvos deste material estão inválidos.");}const attrs:AnyRow={...storedAttrs};for(const attribute of materialAttributes){const raw=attributeValues[attribute.key]??String(storedAttrs[attribute.key]??"");if(attribute.required&&!String(raw).trim())throw new Error(`Preencha o campo obrigatório: ${attribute.label}.`);if(!String(raw).trim()){delete attrs[attribute.key];continue;}if(attribute.data_type==="number"){const numeric=Number(raw);if(!Number.isFinite(numeric))throw new Error(`O campo ${attribute.label} precisa ser numérico.`);attrs[attribute.key]=numeric;}else if(attribute.data_type==="boolean"){attrs[attribute.key]=raw==="true";}else{attrs[attribute.key]=raw;}}const p={org_id:orgId,code:matForm.code.trim(),description:matForm.description.trim(),category:matForm.category.trim(),unit:matForm.unit.trim(),barcode:matForm.barcode.trim()||null,min_stock:Number(matForm.min_stock),status:matForm.status,tracks_lot:matForm.tracks_lot,attributes:attrs,updated_at:new Date().toISOString()};const q=matForm.id?db.from("materials").update(p).eq("id",matForm.id):db.from("materials").insert(p);const {error}=await q;if(error)throw error;setMatForm({id:"",code:"",description:"",category:"Geral",unit:"un",barcode:"",min_stock:"0",status:"ativo",tracks_lot:false,attributes:"{}"});setAttributeValues({});},"Material salvo.");}}><Field label="Código interno" value={matForm.code} onChange={v=>setMatForm({...matForm,code:v})} required/><Field label="Descrição" value={matForm.description} onChange={v=>setMatForm({...matForm,description:v})} required/><Field label="Categoria" value={matForm.category} onChange={v=>setMatForm({...matForm,category:v})} required/><Field label="Unidade de medida" value={matForm.unit} onChange={v=>setMatForm({...matForm,unit:v})} required/><Field label="Código de barras (opcional)" value={matForm.barcode} onChange={v=>setMatForm({...matForm,barcode:v})}/><Field label="Estoque mínimo" type="number" min={0} step={0.01} value={matForm.min_stock} onChange={v=>setMatForm({...matForm,min_stock:v})} required/><SelectField label="Status" value={matForm.status} onChange={v=>setMatForm({...matForm,status:v})} options={[{value:"ativo",label:"Ativo"},{value:"inativo",label:"Inativo"}]} required/><label className="flex items-center gap-2 self-end pb-2 text-sm"><input type="checkbox" checked={matForm.tracks_lot} onChange={e=>setMatForm({...matForm,tracks_lot:e.target.checked})}/> Controla lote/validade</label><div className="grid gap-3 sm:col-span-2 sm:grid-cols-2 xl:col-span-4">{materialAttributes.length?materialAttributes.map(attribute=>attribute.data_type==="boolean"?<SelectField key={attribute.key} label={`${attribute.label}${attribute.required?" *":""}`} value={attributeValues[attribute.key]??""} onChange={value=>setAttributeValues(current=>({...current,[attribute.key]:value}))} required={attribute.required} options={[{value:"true",label:"Sim"},{value:"false",label:"Não"}]}/>:<Field key={attribute.key} label={`${attribute.label}${attribute.required?" *":""}`} type={attribute.data_type==="number"?"number":attribute.data_type==="date"?"date":"text"} value={attributeValues[attribute.key]??""} onChange={value=>setAttributeValues(current=>({...current,[attribute.key]:value}))} required={attribute.required}/>):<p className="text-xs text-muted-foreground">A Gestão pode configurar campos adicionais em Usuários e configurações.</p>}</div><div className="flex items-end gap-2"><button disabled={saving} className="h-10 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground">{matForm.id?"Salvar alterações":"Cadastrar material"}</button>{matForm.id&&<button type="button" className="h-10 rounded-lg border px-3 text-sm" onClick={()=>{setMatForm({id:"",code:"",description:"",category:"Geral",unit:"un",barcode:"",min_stock:"0",status:"ativo",tracks_lot:false,attributes:"{}"});setAttributeValues({});}}>Cancelar</button>}</div></form>:<Empty>O perfil atual não possui permissão para cadastrar ou editar materiais.</Empty>}
     </Panel>
@@ -751,6 +914,53 @@ function Index() {
     <Panel title="Registrar movimentação" description="Entrada, saída e transferência usam a função transacional do banco. Ajustes de inventário exigem contagem física e justificativa.">
       {canOperate?<form className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3" onSubmit={e=>{e.preventDefault();void runSave(async()=>{const qty=Number(moveForm.quantity);if(!moveForm.material_id)throw new Error("Selecione um material.");if(!Number.isFinite(qty)||qty<=0)throw new Error("A quantidade precisa ser maior que zero.");if(moveForm.type==="entrada"&&!moveForm.to_location_id)throw new Error("Selecione o endereço de destino.");if(moveForm.type==="saida"&&!moveForm.from_location_id)throw new Error("Selecione o endereço de origem.");if(moveForm.type==="transferencia"&&(!moveForm.from_location_id||!moveForm.to_location_id||moveForm.from_location_id===moveForm.to_location_id))throw new Error("Transferência exige origem e destino diferentes.");if(moveForm.type==="ajuste"){throw new Error("Use a ação de ajuste físico no formulário de inventário abaixo.");}const {error}=await db.rpc("register_movement",{_type:moveForm.type,_material:moveForm.material_id,_qty:qty,_org:orgId,_from:moveForm.from_location_id||null,_to:moveForm.to_location_id||null,_lot:moveForm.lot||"",_reference:moveForm.reference||"",_notes:[moveForm.reason,moveForm.notes].filter(Boolean).join(" — "),_request:crypto.randomUUID()});if(error)throw error;setMoveForm({...moveForm,quantity:"1",lot:"",reference:"",reason:"",notes:""});},"Movimentação registrada.");}}><SelectField label="Tipo" value={moveForm.type} onChange={v=>setMoveForm({...moveForm,type:v})} options={movementTypes.filter(v=>v!=="ajuste").map(v=>({value:v,label:v.replaceAll("_"," ")}))} required/><SelectField label="Material" value={moveForm.material_id} onChange={v=>setMoveForm({...moveForm,material_id:v})} options={materials.filter(m=>m.status==="ativo"||m.status==="active").map(m=>({value:m.id,label:`${m.code} — ${m.description}`}))} required/><Field label="Quantidade" type="number" min={0.01} step={0.01} value={moveForm.quantity} onChange={v=>setMoveForm({...moveForm,quantity:v})} required/><SelectField label="Origem" value={moveForm.from_location_id} onChange={v=>setMoveForm({...moveForm,from_location_id:v})} options={locations.filter(l=>l.active&&l.status!=="bloqueado").map(l=>({value:l.id,label:`${l.code} — ${l.name}`}))}/><SelectField label="Destino" value={moveForm.to_location_id} onChange={v=>setMoveForm({...moveForm,to_location_id:v})} options={locations.filter(l=>l.active&&l.status!=="bloqueado").map(l=>({value:l.id,label:`${l.code} — ${l.name}`}))}/><Field label="Lote (quando aplicável)" value={moveForm.lot} onChange={v=>setMoveForm({...moveForm,lot:v})}/><Field label="Referência documental" value={moveForm.reference} onChange={v=>setMoveForm({...moveForm,reference:v})}/><Field label="Motivo" value={moveForm.reason} onChange={v=>setMoveForm({...moveForm,reason:v})}/><Field label="Observações" value={moveForm.notes} onChange={v=>setMoveForm({...moveForm,notes:v})}/><div className="flex items-end"><button disabled={saving} className="h-10 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground">Confirmar movimentação</button></div></form>:<Empty>O perfil atual não possui permissão para registrar movimentações.</Empty>}
     </Panel>
+    <Panel title="Registrar devolução de obra" description="Registra o retorno como entrada de estoque e identifica a obra de origem e a condição do material no histórico.">
+      {canOperate ? <form className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3" onSubmit={(event) => {
+        event.preventDefault();
+        void runSave(async () => {
+          const quantity = Number(returnForm.quantity);
+          const destination = locations.find((location) => location.id === returnForm.destination_location_id);
+          if (!returnForm.material_id) throw new Error("Selecione o material devolvido.");
+          if (!Number.isFinite(quantity) || quantity <= 0) throw new Error("A quantidade devolvida precisa ser maior que zero.");
+          if (!returnForm.work_name.trim()) throw new Error("Informe a obra de origem.");
+          if (!destination || !destination.active || destination.status === "bloqueado") throw new Error("Selecione um endereço ativo que aceite entradas.");
+          if (returnForm.condition === "avaliacao" && destination.status !== "reservado") {
+            throw new Error("Materiais avariados ou pendentes de avaliação devem ser direcionados a um endereço marcado como reservado.");
+          }
+          const conditionLabel = returnForm.condition === "apto"
+            ? "Conferido e apto para reutilização"
+            : "Avariado ou aguardando avaliação";
+          const detail = [`Condição no retorno: ${conditionLabel}`, returnForm.notes.trim()].filter(Boolean).join(" · ");
+          const { error } = await db.rpc("register_movement", {
+            _type: "entrada",
+            _material: returnForm.material_id,
+            _qty: quantity,
+            _org: orgId,
+            _from: null,
+            _to: destination.id,
+            _lot: returnForm.lot || "",
+            _reference: `Devolução de obra: ${returnForm.work_name.trim()}`,
+            _notes: detail,
+            _request: crypto.randomUUID(),
+          });
+          if (error) throw error;
+          setReturnForm({ material_id:"", quantity:"1", destination_location_id:"", lot:"", work_name:"", condition:"apto", notes:"" });
+        }, "Devolução de obra registrada como entrada de estoque.");
+      }}>
+        <Field label="Obra de origem" value={returnForm.work_name} onChange={(value) => setReturnForm({ ...returnForm, work_name:value })} required placeholder="Identificação da obra"/>
+        <SelectField label="Material devolvido" value={returnForm.material_id} onChange={(value) => setReturnForm({ ...returnForm, material_id:value })} required options={materials.filter((material) => material.status === "ativo" || material.status === "active").map((material) => ({ value:material.id, label:`${material.code} — ${material.description}` }))}/>
+        <Field label="Quantidade devolvida" type="number" min={0.001} step={0.001} value={returnForm.quantity} onChange={(value) => setReturnForm({ ...returnForm, quantity:value })} required/>
+        <SelectField label="Condição do material" value={returnForm.condition} onChange={(value) => setReturnForm({ ...returnForm, condition:value })} required options={[{value:"apto",label:"Conferido e apto para reutilização"},{value:"avaliacao",label:"Avariado / precisa de avaliação"}]}/>
+        <SelectField label="Endereço de destino" value={returnForm.destination_location_id} onChange={(value) => setReturnForm({ ...returnForm, destination_location_id:value })} required options={locations.filter((location) => location.active && location.status !== "bloqueado").map((location) => ({ value:location.id, label:`${location.code} — ${location.name} · ${location.status}` }))}/>
+        <Field label="Lote (quando aplicável)" value={returnForm.lot} onChange={(value) => setReturnForm({ ...returnForm, lot:value })}/>
+        <Field label="Observações da conferência" value={returnForm.notes} onChange={(value) => setReturnForm({ ...returnForm, notes:value })} placeholder="Ex.: embalagem danificada, faltando componente..."/>
+        <div className="sm:col-span-2 xl:col-span-3 rounded-lg border border-amber-300/60 bg-amber-50/70 p-3 text-xs leading-5 text-amber-900 dark:border-amber-900 dark:bg-amber-950/25 dark:text-amber-100">
+          Para itens avariados ou que ainda precisam de avaliação, selecione um endereço previamente marcado como <strong>reservado</strong>. O sistema registra a condição informada, mas a inspeção física e a decisão de reaproveitamento continuam sendo procedimentos da equipe.
+        </div>
+        <div className="flex items-end"><button disabled={saving} className="h-10 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground">Registrar devolução</button></div>
+      </form> : <Empty>O perfil atual não possui permissão para registrar devoluções.</Empty>}
+    </Panel>
+
     <Panel title="Ajuste de inventário" description="Registra a contagem física e diferença por meio da rotina de ajuste do banco.">
       {canOperate?<AdjustmentForm orgId={orgId} materials={materials} locations={locations} saving={saving} onSave={runSave} onDone={refresh}/>:<Empty>O perfil atual não possui permissão para ajustar estoque.</Empty>}
     </Panel>
@@ -764,7 +974,7 @@ function Index() {
         <Field label="Data inicial" type="date" value={movementFilters.fromDate} onChange={value=>setMovementFilters(current=>({...current,fromDate:value}))}/>
         <Field label="Data final" type="date" value={movementFilters.toDate} onChange={value=>setMovementFilters(current=>({...current,toDate:value}))}/>
       </div>
-      <Table headers={["Nº","Data","Tipo","Material","Quantidade","Origem","Destino","Referência / motivo","Estorno"]} rows={movements.filter(m=>{const material=materials.find(item=>item.id===m.material_id);const fromLocation=locations.find(item=>item.id===m.from_location_id);const toLocation=locations.find(item=>item.id===m.to_location_id);const query=search.trim().toLowerCase();const createdAt=new Date(m.created_at).getTime();const fromDate=movementFilters.fromDate?new Date(`${movementFilters.fromDate}T00:00:00`).getTime():null;const toDate=movementFilters.toDate?new Date(`${movementFilters.toDate}T23:59:59.999`).getTime():null;const searchable=[m.number,m.type,m.lot,m.reason,m.reference,m.notes,material?.code,material?.description,fromLocation?.code,fromLocation?.name,toLocation?.code,toLocation?.name,members.find(member=>member.user_id===m.user_id)?.profiles?.email];return (!query||searchable.some(value=>String(value??"").toLowerCase().includes(query)) )&&(movementFilters.type==="todos"||m.type===movementFilters.type)&&(movementFilters.material_id==="todos"||m.material_id===movementFilters.material_id)&&(movementFilters.location_id==="todos"||m.from_location_id===movementFilters.location_id||m.to_location_id===movementFilters.location_id)&&(movementFilters.user_id==="todos"||m.user_id===movementFilters.user_id)&&(!fromDate||createdAt>=fromDate)&&(!toDate||createdAt<=toDate);}).map(m=>[pretty(m.number),new Date(m.created_at).toLocaleString("pt-BR"),statusPill(m.type),pretty(materials.find(x=>x.id===m.material_id)?.code),`${pretty(m.quantity)} ${materials.find(x=>x.id===m.material_id)?.unit??""}`,pretty(locations.find(x=>x.id===m.from_location_id)?.code),pretty(locations.find(x=>x.id===m.to_location_id)?.code),pretty(m.reference||m.reason),m.reversed_by?"Estornado":canOperate?<button className="rounded border px-2 py-1 text-xs" onClick={()=>{const reason=window.prompt("Motivo do estorno (obrigatório):");if(reason?.trim())void runSave(async()=>{const {error}=await db.rpc("reverse_movement",{_movement:m.id,_reason:reason.trim()});if(error)throw error;},"Estorno registrado.");}}>Estornar</button>:"—"])}/></Panel>
+      <Table headers={["Nº","Data","Tipo","Material","Quantidade","Origem","Destino","Referência / motivo","Estorno"]} rows={movements.filter(m=>{const material=materials.find(item=>item.id===m.material_id);const fromLocation=locations.find(item=>item.id===m.from_location_id);const toLocation=locations.find(item=>item.id===m.to_location_id);const query=search.trim().toLowerCase();const createdAt=new Date(m.created_at).getTime();const fromDate=movementFilters.fromDate?new Date(`${movementFilters.fromDate}T00:00:00`).getTime():null;const toDate=movementFilters.toDate?new Date(`${movementFilters.toDate}T23:59:59.999`).getTime():null;const searchable=[m.number,m.type,m.lot,m.reason,m.reference,m.notes,material?.code,material?.description,fromLocation?.code,fromLocation?.name,toLocation?.code,toLocation?.name,members.find(member=>member.user_id===m.user_id)?.profiles?.email];return (!query||searchable.some(value=>String(value??"").toLowerCase().includes(query)) )&&(movementFilters.type==="todos"||m.type===movementFilters.type)&&(movementFilters.material_id==="todos"||m.material_id===movementFilters.material_id)&&(movementFilters.location_id==="todos"||m.from_location_id===movementFilters.location_id||m.to_location_id===movementFilters.location_id)&&(movementFilters.user_id==="todos"||m.user_id===movementFilters.user_id)&&(!fromDate||createdAt>=fromDate)&&(!toDate||createdAt<=toDate);}).map(m=>[pretty(m.number),new Date(m.created_at).toLocaleString("pt-BR"),String(m.reference??"").startsWith("Devolução de obra:")?<span className="rounded-full bg-emerald-100 px-2 py-1 text-xs font-medium text-emerald-800">Devolução</span>:statusPill(m.type),pretty(materials.find(x=>x.id===m.material_id)?.code),`${pretty(m.quantity)} ${materials.find(x=>x.id===m.material_id)?.unit??""}`,pretty(locations.find(x=>x.id===m.from_location_id)?.code),pretty(locations.find(x=>x.id===m.to_location_id)?.code),pretty([m.reference,m.reason,m.notes].filter(Boolean).join(" · ")),m.reversed_by?"Estornado":canOperate?<button className="rounded border px-2 py-1 text-xs" onClick={()=>{const reason=window.prompt("Motivo do estorno (obrigatório):");if(reason?.trim())void runSave(async()=>{const {error}=await db.rpc("reverse_movement",{_movement:m.id,_reason:reason.trim()});if(error)throw error;},"Estorno registrado.");}}>Estornar</button>:"—"])}/></Panel>
     <Panel title="Contagens de inventário" description="Histórico de diferenças registradas."><Table headers={["Data","Material","Endereço","Lote","Esperado","Contado","Diferença","Motivo"]} rows={counts.map(c=>[dateLabel(c.created_at),pretty(materials.find(m=>m.id===c.material_id)?.code),pretty(locations.find(l=>l.id===c.location_id)?.code),pretty(c.lot),c.expected_qty,c.counted_qty,c.difference,pretty(c.reason)])}/></Panel>
   </div>;
 
