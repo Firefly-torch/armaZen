@@ -568,8 +568,7 @@ export function WarehouseMap({
       if (
         !destinationParent ||
         destinationParent.warehouse_id !== source.warehouse_id ||
-        levelsById.get(destinationParent.level_id)?.is_storage !== false ||
-        (childrenByParent.get(destinationParent.id) ?? []).length > 0 && levelsById.get(destinationParent.level_id)?.is_storage !== false
+        levelsById.get(destinationParent.level_id)?.is_storage !== false
       ) {
         return undefined;
       }
