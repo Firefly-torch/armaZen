@@ -10,7 +10,11 @@ import {
 } from "lucide-react";
 import { WarehouseMap } from "@/components/warehouse/warehouse-map";
 import { supabase } from "@/integrations/supabase/client";
-import { getInventoryAccuracy, getReplenishmentSuggestions } from "@/lib/dashboard-metrics";
+import {
+  getInventoryAccuracy,
+  getLatestInventoryCountItems,
+  getReplenishmentSuggestions,
+} from "@/lib/dashboard-metrics";
 import { getStorageLocationIds, summarizeMaterialBalances } from "@/lib/warehouse-stock";
 import { startDemoSession, type DemoRole } from "@/integrations/supabase/admin-auth";
 import type { User } from "@supabase/supabase-js";
@@ -418,10 +422,14 @@ function Index() {
       new Date(movement.created_at).getTime() >= since
     );
     const scopedCounts = counts.filter((item) =>
-      new Date(item.created_at).getTime() >= since &&
-      (dashboardWarehouseId === "todos" || scopedLocationIds.has(item.location_id))
+      dashboardWarehouseId === "todos" || scopedLocationIds.has(item.location_id)
     );
-    const countAccuracy = getInventoryAccuracy(scopedCounts);
+    const latestCompletedCounts = getLatestInventoryCountItems(
+      scopedCounts,
+      inventorySessions,
+      since,
+    );
+    const countAccuracy = getInventoryAccuracy(latestCompletedCounts);
     const lowStockItems = getReplenishmentSuggestions(materials, availableBalances);
     const scopedTasks = tasks.filter((task) =>
       dashboardWarehouseId === "todos" ||
@@ -477,7 +485,7 @@ function Index() {
       storageLocations: storageLocations.length,
       movementDays,
     };
-  }, [materials, locations, levels, balances, movements, tasks, counts, period, dashboardWarehouseId, activeWarehouseIds]);
+  }, [materials, locations, levels, balances, movements, tasks, counts, inventorySessions, period, dashboardWarehouseId, activeWarehouseIds]);
 
   const allReplenishmentSuggestions = useMemo(() => {
     const validStorageLocationIds = getStorageLocationIds(locations, levels, activeWarehouseIds);
@@ -542,8 +550,8 @@ function Index() {
   const statusPill = (text: string) => <span className="rounded-full bg-muted px-2.5 py-1 text-xs font-medium">{text.replaceAll("_", " ")}</span>;
 
   const countAccuracyDetail = totals.countAccuracy
-    ? `${totals.countAccuracy.accurate.toLocaleString("pt-BR")} de ${totals.countAccuracy.total.toLocaleString("pt-BR")} linhas contadas sem divergência`
-    : "Nenhuma contagem registrada no período";
+    ? `${totals.countAccuracy.accurate.toLocaleString("pt-BR")} de ${totals.countAccuracy.total.toLocaleString("pt-BR")} combinações material/endereço/lote conferidas sem divergência`
+    : "Nenhuma contagem concluída no período";
   const dashboardLocationIds = new Set(locations
     .filter((location) => dashboardWarehouseId === "todos" || location.warehouse_id === dashboardWarehouseId)
     .map((location) => location.id));
@@ -611,7 +619,7 @@ function Index() {
           </div>
         </article>)}
       </div>
-      <p className="mt-2 text-[11px] text-muted-foreground">A acuracidade representa a proporção de linhas de contagem sem diferença (diferença igual a zero), não uma auditoria integral de todo o estoque. O histórico considerado corresponde aos registros carregados pelo aplicativo.</p>
+      <p className="mt-2 text-[11px] text-muted-foreground">A acuracidade usa somente a contagem concluída mais recente de cada combinação material/endereço/lote dentro do período. Uma recontagem substitui a anterior no indicador, mas não apaga o histórico; sessões em andamento não entram no cálculo.</p>
     </section>
 
     <div className="grid gap-4 xl:grid-cols-[1.45fr_1fr]">
@@ -1137,7 +1145,7 @@ function Index() {
   const selectedInventoryItems = counts.filter((item) => item.count_id === selectedInventoryId);
 
   const inventorySection = <div className="space-y-5">
-    <Panel title="Abrir inventário" description="Crie uma sessão de contagem para organizar as conferências. As diferenças são registradas com histórico e motivo.">
+    <Panel title="Abrir inventário" description="Crie uma sessão de contagem para organizar as conferências. A última contagem concluída de cada material/endereço/lote substitui as anteriores na acuracidade, mantendo o histórico.">
       {canOperate?<form className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3" onSubmit={e=>{e.preventDefault();void runSave(async()=>{
         const payload={org_id:orgId,warehouse_id:inventoryForm.warehouse_id&&inventoryForm.warehouse_id!=="todos"?inventoryForm.warehouse_id:null,description:inventoryForm.description.trim()||"Contagem cíclica",created_by:user!.id,status:"em_andamento",completed_at:null};
         const {data,error}=await db.from("inventory_counts").insert(payload).select("*").single();
@@ -1151,7 +1159,7 @@ function Index() {
       </form>:<Empty>O perfil atual não possui permissão para abrir inventários.</Empty>}
     </Panel>
 
-    <Panel title="Sessões de inventário" description="Selecione uma sessão em andamento para lançar contagens. Uma combinação de material, endereço e lote só pode ser contada uma vez por sessão.">
+    <Panel title="Sessões de inventário" description="Uma combinação de material, endereço e lote pode ser contada uma vez por sessão. Para corrigir uma divergência anterior, abra uma nova sessão e faça outra contagem.">
       <div className="grid gap-3 sm:grid-cols-2">
         <SelectField label="Sessão selecionada" value={selectedInventoryId} onChange={setSelectedInventoryId} options={inventorySessions.map(session=>({value:session.id,label:`${new Date(session.created_at).toLocaleDateString("pt-BR")} · ${session.description||"Inventário"} · ${session.status==="concluido"?"Concluído":"Em andamento"}`}))}/>
         {selectedInventory&&<div className="rounded-lg border bg-muted/30 p-3 text-sm"><p className="font-semibold">{selectedInventory.description||"Inventário"}</p><p className="mt-1 text-muted-foreground">{warehouses.find(w=>w.id===selectedInventory.warehouse_id)?.name??"Todos os armazéns"} · {selectedInventory.status==="concluido"?"Concluído":"Em andamento"}</p><p className="mt-1 text-xs text-muted-foreground">{selectedInventoryItems.length} contagem(ns) · {selectedInventoryItems.filter(item=>Number(item.difference)!==0).length} divergência(s)</p></div>}
