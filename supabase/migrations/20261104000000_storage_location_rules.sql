@@ -271,7 +271,14 @@ declare
   parent_cursor uuid;
   depth int := 0;
   has_children boolean;
+  hierarchy_changed boolean;
 begin
+  if tg_op = 'INSERT' then
+    hierarchy_changed := true;
+  else
+    hierarchy_changed := new.parent_id is distinct from old.parent_id;
+  end if;
+
   if new.parent_id is not null then
     select l.warehouse_id, l.org_id, lv.is_storage,
            l.active as parent_active, w.active as warehouse_active
@@ -295,7 +302,7 @@ begin
     -- Validate active/structural parent and direct stock only when the
     -- hierarchy is created or changed. This avoids blocking routine edits to
     -- legacy child locations whose parent needs later cleanup.
-    if tg_op = 'INSERT' or new.parent_id is distinct from old.parent_id then
+    if hierarchy_changed then
       if not p.parent_active or not p.warehouse_active then
         raise exception 'O endereço pai e seu armazém precisam estar ativos.';
       end if;
