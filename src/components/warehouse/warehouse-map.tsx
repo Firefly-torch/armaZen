@@ -114,6 +114,7 @@ type WarehouseMapProps = {
     draggedPosition: { x: number; y: number },
     targetPosition: { x: number; y: number },
   ) => Promise<void>;
+  onMoveLocation: (locationId: string, parentId: string | null, posX: number, posY: number) => Promise<void>;
   onOpenTasks: () => void;
   onOpenMovements: () => void;
 };
@@ -190,6 +191,7 @@ export function WarehouseMap({
   onSelectLocation,
   onUpdatePosition,
   onSwapPositions,
+  onMoveLocation,
   onOpenTasks,
   onOpenMovements,
 }: WarehouseMapProps) {
@@ -549,6 +551,87 @@ export function WarehouseMap({
     }
   };
 
+  const getDropParentId = (sourceId: string, targetId: string): string | null | undefined => {
+    const source = locationsById.get(sourceId);
+    const target = locationsById.get(targetId);
+    if (!source || !target || source.id === target.id) return undefined;
+
+    // Dropping on a sibling keeps the original group and swaps the visual cells.
+    if (source.parent_id === target.parent_id) return source.parent_id ?? null;
+
+    // Dropping on a structural address nests the source under it. Dropping on
+    // a storage leaf places the source beside that leaf, under the same parent.
+    const targetIsStructural = levelsById.get(target.level_id)?.is_storage === false;
+    const destinationParentId = targetIsStructural ? target.id : target.parent_id ?? null;
+
+    if (destinationParentId) {
+      const destinationParent = locationsById.get(destinationParentId);
+      if (
+        !destinationParent ||
+        destinationParent.warehouse_id !== source.warehouse_id ||
+        levelsById.get(destinationParent.level_id)?.is_storage !== false
+      ) {
+        return undefined;
+      }
+
+      // Prevent cycles by ensuring the destination is not the source itself
+      // or any descendant of the source.
+      let ancestorId: string | null = destinationParentId;
+      let depth = 0;
+      while (ancestorId && depth < 20) {
+        if (ancestorId === source.id) return undefined;
+        ancestorId = locationsById.get(ancestorId)?.parent_id ?? null;
+        depth += 1;
+      }
+    }
+
+    return destinationParentId;
+  };
+
+  const dropLocation = async (sourceId: string, targetId: string) => {
+    if (!canManage || saving || sourceId === targetId) return;
+    const source = locationsById.get(sourceId);
+    const target = locationsById.get(targetId);
+    if (!source || !target) return;
+
+    if (source.parent_id === target.parent_id) {
+      await swapLocations(sourceId, targetId);
+      return;
+    }
+
+    const destinationParentId = getDropParentId(sourceId, targetId);
+    if (destinationParentId === undefined) {
+      setMapError("Destino inválido. Escolha um endereço estrutural do mesmo armazém, sem criar uma relação circular.");
+      return;
+    }
+    if (destinationParentId === source.parent_id) return;
+
+    const occupied = new Set(
+      [...(positionsByParent.get(destinationParentId) ?? new Map<string, CellPosition>()).values()]
+        .map((position) => position.x + ":" + position.y),
+    );
+    let destinationPosition: CellPosition | null = null;
+    for (let y = 1; y <= 1000 && !destinationPosition; y += 1) {
+      for (let x = 1; x <= GRID_COLUMNS; x += 1) {
+        if (!occupied.has(x + ":" + y)) {
+          destinationPosition = { x, y };
+          break;
+        }
+      }
+    }
+    if (!destinationPosition) {
+      setMapError("Não foi possível encontrar uma posição visual livre no grupo de destino.");
+      return;
+    }
+
+    setMapError("");
+    try {
+      await onMoveLocation(sourceId, destinationParentId, destinationPosition.x, destinationPosition.y);
+    } catch (error) {
+      setMapError(error instanceof Error ? error.message : "Não foi possível mover o endereço para o novo grupo.");
+    }
+  };
+
   const moveSelected = (deltaX: number, deltaY: number) => {
     if (!selectedLocation || !selectedPosition || !editMode || !canManage || saving) return;
     const nextX = Math.max(1, Math.min(GRID_COLUMNS, selectedPosition.x + deltaX));
@@ -612,8 +695,7 @@ export function WarehouseMap({
         }}
         onDragOver={(event) => {
           if (!editMode || !canManage || saving || !draggedId || draggedId === location.id) return;
-          const draggedLocation = locationsById.get(draggedId);
-          if (!draggedLocation || draggedLocation.parent_id !== location.parent_id) return;
+          if (getDropParentId(draggedId, location.id) === undefined) return;
           event.preventDefault();
           event.dataTransfer.dropEffect = "move";
           setDropTargetId(location.id);
@@ -626,7 +708,7 @@ export function WarehouseMap({
           const sourceId = event.dataTransfer.getData("text/plain") || draggedId;
           setDraggedId(null);
           setDropTargetId(null);
-          if (sourceId && sourceId !== location.id) void swapLocations(sourceId, location.id);
+          if (sourceId && sourceId !== location.id) void dropLocation(sourceId, location.id);
         }}
         onDragEnd={() => {
           setDraggedId(null);
@@ -679,7 +761,7 @@ export function WarehouseMap({
               <button
                 type="button"
                 className="touch-none shrink-0 rounded-md border bg-background/80 p-1.5 text-primary"
-                title="Segure e arraste para outro endereço do mesmo grupo"
+                title="Segure e arraste para outro grupo ou posição"
                 aria-label={"Arrastar endereço " + location.code}
                 onPointerDown={(event) => {
                   event.preventDefault();
@@ -694,8 +776,9 @@ export function WarehouseMap({
                   dragPointerRef.current = { locationId: location.id, clientX: event.clientX, clientY: event.clientY };
                   const targetElement = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>("[data-location-id]");
                   const targetId = targetElement?.dataset.locationId;
-                  const target = targetId ? locationsById.get(targetId) : undefined;
-                  setDropTargetId(target && target.id !== location.id && target.parent_id === location.parent_id ? target.id : null);
+                  setDropTargetId(
+                    targetId && getDropParentId(location.id, targetId) !== undefined ? targetId : null,
+                  );
                 }}
                 onPointerUp={(event) => {
                   if (dragPointerRef.current?.locationId !== location.id) return;
@@ -705,8 +788,8 @@ export function WarehouseMap({
                   dragPointerRef.current = null;
                   setDraggedId(null);
                   setDropTargetId(null);
-                  if (target && target.id !== location.id && target.parent_id === location.parent_id) {
-                    void swapLocations(location.id, target.id);
+                  if (target && target.id !== location.id) {
+                    void dropLocation(location.id, target.id);
                   }
                 }}
                 onPointerCancel={() => {
