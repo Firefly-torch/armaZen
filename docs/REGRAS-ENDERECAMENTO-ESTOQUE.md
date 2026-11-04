@@ -27,6 +27,8 @@ O cálculo de reposição e a disponibilidade operacional usam somente o saldo d
 
 A migração não move saldos existentes automaticamente. O sistema não tem evidência suficiente para decidir em qual posição física cada material está. Saldos em endereços-pai, níveis não armazenáveis ou endereços inativos permanecem visíveis em uma seção de revisão e são excluídos da disponibilidade e da ocupação. A equipe deve conferir fisicamente e registrar uma transferência para a posição correta.
 
+Um saldo legado diretamente em um endereço-pai não impede a edição rotineira desse endereço nem a reorganização de seus subendereços. O saldo continua destacado como “a revisar”, não se torna disponível e não é movido automaticamente. A regra impede que novos níveis de armazenagem sejam atribuídos a endereços que já possuem subendereços; para corrigir um endereço-pai legado, o nível pode ser alterado para um tipo estrutural.
+
 A migração bloqueia novas entradas, transferências de entrada e ajustes em endereços que não sejam posições finais válidas. Saídas a partir de endereços com saldo legado continuam possíveis para permitir a retirada controlada. Estornos também podem restaurar a movimentação original no endereço de origem para preservar o histórico.
 
 ## Relação com Assistente de PCP
