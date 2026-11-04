@@ -240,13 +240,18 @@ begin
     raise exception 'O destino do saldo precisa ser uma posição final de armazenagem.';
   end if;
 
+  if not public.is_storage_location(new.org_id, new.location_id)
+     and new.quantity > old.quantity then
+    raise exception 'O saldo de um endereço estrutural não pode ser aumentado. Transfira o saldo legado para uma posição final.';
+  end if;
+
   return new;
 end;
-$$;
+$;
 
 drop trigger if exists inventory_balances_storage_guard on public.inventory_balances;
 create trigger inventory_balances_storage_guard
-before insert or update of location_id on public.inventory_balances
+before insert or update of location_id, quantity on public.inventory_balances
 for each row
 execute function public.prevent_new_parent_stock_balance();
 
