@@ -127,8 +127,19 @@ begin
   if m.status <> 'ativo' and _type <> 'estorno' then
     raise exception 'Material % está inativo.', m.code;
   end if;
-  if m.tracks_lot and v_lot = '' and _type <> 'estorno' then
-    raise exception 'O material % exige identificação de lote.', m.code;
+  if m.tracks_lot and v_lot = '' and _type <> 'estorno' and (
+    _type not in ('saida', 'transferencia')
+    or _from is null
+    or not exists (
+      select 1
+        from public.inventory_balances legacy_balance
+       where legacy_balance.material_id = _material
+         and legacy_balance.location_id = _from
+         and legacy_balance.lot = ''
+         and legacy_balance.quantity >= _qty
+    )
+  ) then
+    raise exception 'O material % exige identificação de lote para novas entradas. Estoque legado sem lote pode ser retirado ou transferido a partir de sua posição atual.', m.code;
   end if;
 
   if _type in ('saida', 'transferencia')
@@ -227,8 +238,15 @@ begin
      where m.id = _material
        and m.org_id = _org
        and m.tracks_lot
-  ) and coalesce(trim(_lot), '') = '' then
-    raise exception 'Este material exige identificação de lote.';
+  ) and coalesce(trim(_lot), '') = '' and not exists (
+    select 1
+      from public.inventory_balances legacy_balance
+     where legacy_balance.material_id = _material
+       and legacy_balance.location_id = _location
+       and legacy_balance.lot = ''
+       and legacy_balance.quantity > 0
+  ) then
+    raise exception 'Este material exige identificação de lote. Saldo legado sem lote pode ser contado na posição em que já está registrado.';
   end if;
 
   if not public.is_storage_location(_org, _location) then
