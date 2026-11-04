@@ -921,6 +921,7 @@ function Index() {
           ? (stockSummaries.get(material.id)?.availableQuantity ?? 0) < Number(material.min_stock || 0)
           : (stockSummaries.get(material.id)?.availableQuantity ?? 0) >= Number(material.min_stock || 0)))
     )
+    .sort((a, b) => a.code.localeCompare(b.code, "pt-BR", { numeric: true }))
     .map((material) => {
       const stock = stockSummaries.get(material.id);
       const available = stock?.availableQuantity ?? 0;
