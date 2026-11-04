@@ -955,6 +955,28 @@ function Index() {
         if (error) throw error;
         if (!data) throw new Error("Não foi possível alterar o grupo hierárquico do endereço.");
       }, "Endereço movido para outro grupo.")}
+      onTransferLegacyBalance={(materialId, sourceLocationId, destinationLocationId, lot, quantity) => runSave(async () => {
+        if (!(quantity > 0) || !Number.isFinite(quantity)) throw new Error("A quantidade do saldo legado é inválida.");
+        if (sourceLocationId === destinationLocationId) throw new Error("Origem e destino precisam ser diferentes.");
+        const source = locations.find((location) => location.id === sourceLocationId);
+        const destination = storageLocationOptions.find((location) => location.id === destinationLocationId);
+        if (!source || !destination || source.warehouse_id !== destination.warehouse_id) {
+          throw new Error("A posição de destino precisa pertencer ao mesmo armazém.");
+        }
+        const { error } = await db.rpc("register_movement", {
+          _org: orgId,
+          _type: "transferencia",
+          _material: materialId,
+          _qty: quantity,
+          _from: sourceLocationId,
+          _to: destinationLocationId,
+          _lot: lot,
+          _reference: "Regularização de saldo legado em endereço-pai",
+          _notes: "Transferência confirmada pela Gestão após conferência física do material.",
+          _request: crypto.randomUUID(),
+        });
+        if (error) throw error;
+      }, "Saldo legado transferido para a posição descendente.")}
       onOpenTasks={() => setSection("tasks")}
       onOpenMovements={() => setSection("movements")}
     />
