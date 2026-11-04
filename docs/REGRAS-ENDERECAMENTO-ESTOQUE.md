@@ -10,6 +10,10 @@ Uma posição de armazenagem válida precisa:
 - não possuir endereços-filhos;
 - não estar bloqueada para que receba novas entradas ou transferências.
 
+## Reorganização da hierarquia
+
+No mapa, arrastar um endereço sobre um endereço estrutural transfere-o para dentro desse grupo. Arrastar sobre uma posição final transfere-o para o mesmo grupo dessa posição. Arrastar entre endereços que já pertencem ao mesmo grupo continua apenas trocando suas posições visuais. A operação preserva os subendereços do item movido, atribui uma célula visual livre e impede relações circulares, mudanças entre armazéns e o uso de níveis de armazenagem como endereço-pai.
+
 O estado reservado continua sendo uma posição física de armazenagem, mas seu saldo não é disponibilidade livre. O estado bloqueado também continua existindo fisicamente e aparece separado, porém não recebe novas alocações.
 
 ## Leitura dos saldos
