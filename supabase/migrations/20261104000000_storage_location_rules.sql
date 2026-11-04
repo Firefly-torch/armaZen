@@ -242,19 +242,27 @@ declare
   has_children boolean;
 begin
   if new.parent_id is not null then
-    select l.warehouse_id, l.org_id, lv.is_storage
+    select l.warehouse_id, l.org_id, lv.is_storage,
+           l.active as parent_active, w.active as warehouse_active
       into p
       from public.locations l
       join public.location_levels lv
         on lv.id = l.level_id
        and lv.warehouse_id = l.warehouse_id
        and lv.org_id = l.org_id
+      join public.warehouses w
+        on w.id = l.warehouse_id
+       and w.org_id = l.org_id
      where l.id = new.parent_id;
 
     if p.warehouse_id is null
        or p.warehouse_id is distinct from new.warehouse_id
        or p.org_id is distinct from new.org_id then
       raise exception 'O endereço pai deve pertencer à mesma organização e ao mesmo armazém.';
+    end if;
+
+    if not p.parent_active or not p.warehouse_active then
+      raise exception 'O endereço pai e seu armazém precisam estar ativos.';
     end if;
 
     if p.is_storage then
@@ -314,8 +322,9 @@ begin
       from public.warehouses
      where id = new.warehouse_id
        and org_id = new.org_id
+       and active
   ) then
-    raise exception 'Armazém inválido.';
+    raise exception 'Armazém inválido ou inativo.';
   end if;
 
   return new;
