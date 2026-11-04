@@ -53,10 +53,10 @@ O login demonstrativo não aceita e-mail ou senha arbitrários e não altera a s
 
 ## Módulos
 
-- **Dashboard:** indicadores do Supabase, filtro por armazém e período, estoque agrupado por unidade de medida, ocupação estimada de posições e tendência de movimentações.
+- **Dashboard:** indicadores do Supabase, filtro por armazém e período, acuracidade das linhas de inventário contadas, divergências, reposição necessária, tarefas atrasadas, devoluções identificadas, ocupação e tendência de movimentações.
 - **Armazém e endereçamento:** estrutura hierárquica configurável, mapa geral responsivo, pesquisa por material/endereço/código de barras, filtros de situação e validade, organização visual por Gestão e detalhes contextuais adaptados a telas pequenas.
-- **Materiais e estoque:** cadastro, saldos por endereço, alertas de estoque mínimo e validade de lotes, além de campos adicionais configuráveis.
-- **Movimentações:** entradas, saídas, transferências, ajustes e estornos por funções transacionais do banco.
+- **Materiais e estoque:** cadastro, saldos por endereço, planejamento estimado de reposição até o estoque mínimo (considerando apenas endereços ativos e disponíveis), alertas de validade de lotes e campos adicionais configuráveis.
+- **Movimentações:** entradas, saídas, transferências, ajustes, estornos e registro rastreável de devoluções de obra por função transacional do banco. A condição informada e a obra de origem ficam na referência/observações.
 - **Inventário:** sessões de contagem, quantidade esperada e contada, divergências e histórico. Uma sessão concluída não aceita novas contagens.
 - **Tarefas:** Kanban integrado ao armazém; mudar uma tarefa não altera o estoque.
 - **Exportação para ERP:** CSV, XLSX e JSON com prévia, seleção e mapeamento de campos, filtros de data e modelos reutilizáveis. Exportar não sincroniza com o ERP.

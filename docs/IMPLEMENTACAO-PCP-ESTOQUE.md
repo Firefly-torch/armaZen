@@ -22,7 +22,7 @@ Esta alteração aproxima o armaZen da demanda de produtividade do setor de esto
 
 ## Critérios de interpretação
 
-- O valor de reposição é calculado por material; unidades diferentes nunca são somadas.
+- O valor de reposição é calculado por material e unidade; nunca soma unidades incompatíveis. Para estimar disponibilidade, considera somente saldos em endereços ativos com situação `disponivel`; saldos em endereços `reservado`, `bloqueado` ou inativos não reduzem a necessidade estimada.
 - Quando não há linhas de inventário no período, a acuracidade é exibida como indisponível, não como 0%.
 - A classificação de condição na devolução é declaratória. O sistema registra o que o operador informou; a inspeção física, o aceite e o reaproveitamento continuam dependendo da equipe.
 - Para materiais em avaliação, o endereço reservado funciona como segregação operacional. Não substitui uma área física de quarentena nem um procedimento formal de inspeção.
