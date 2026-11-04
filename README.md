@@ -30,7 +30,7 @@ O modelo está em [.env.example](.env.example). O arquivo .env local é ignorado
 
 ## Banco de dados e primeiro deploy
 
-A estrutura inicial está em [supabase/migrations/20261016000000_initial_schema.sql](supabase/migrations/20261016000000_initial_schema.sql). A migração incremental [supabase/migrations/20261021000000_demo_profiles_inventory_workflow.sql](supabase/migrations/20261021000000_demo_profiles_inventory_workflow.sql) prepara os perfis de demonstração e as sessões de inventário. A migração [supabase/migrations/20261104000000_storage_location_rules.sql](supabase/migrations/20261104000000_storage_location_rules.sql) aplica as regras de posições finais, impede novas alocações em endereços-pai e exige lote quando o material estiver configurado para rastreio. A migração [supabase/migrations/20261104130000_location_edit_and_reparent.sql](supabase/migrations/20261104130000_location_edit_and_reparent.sql) libera a edição de estruturas legadas e a reorganização segura da hierarquia.
+A estrutura inicial está em [supabase/migrations/20261016000000_initial_schema.sql](supabase/migrations/20261016000000_initial_schema.sql). A migração incremental [supabase/migrations/20261021000000_demo_profiles_inventory_workflow.sql](supabase/migrations/20261021000000_demo_profiles_inventory_workflow.sql) prepara os perfis de demonstração e as sessões de inventário. A migração [supabase/migrations/20261104000000_storage_location_rules.sql](supabase/migrations/20261104000000_storage_location_rules.sql) aplica as regras de posições finais, impede novas alocações em endereços-pai e exige lote quando o material estiver configurado para rastreio. A migração [supabase/migrations/20261104130000_location_edit_and_reparent.sql](supabase/migrations/20261104130000_location_edit_and_reparent.sql) libera a edição de estruturas legadas e a reorganização segura da hierarquia. A migração [supabase/migrations/20261104140000_inventory_accuracy_and_balance_reconciliation.sql](supabase/migrations/20261104140000_inventory_accuracy_and_balance_reconciliation.sql) atualiza a demonstração de acuracidade, adiciona conferência/reconstrução de saldos pelo livro de movimentações e registra as regras do KPI de recontagem.
 
 Antes de aplicar migrações, confirme o banco de destino, faça backup e confira o estado atual do esquema. A migração inicial não é idempotente; não a execute manualmente duas vezes nem aplique o conjunto inicial sobre um banco com objetos existentes sem comparar o plano.
 
@@ -54,10 +54,10 @@ O login demonstrativo não aceita e-mail ou senha arbitrários e não altera a s
 ## Módulos
 
 - **Dashboard:** indicadores do Supabase, filtro por armazém e período, acuracidade das linhas de inventário contadas, divergências, reposição necessária, tarefas atrasadas, devoluções identificadas, ocupação e tendência de movimentações.
-- **Armazém e endereçamento:** estrutura hierárquica configurável, mapa geral responsivo e distinção entre endereços estruturais e posições finais de armazenagem. Ocupação e capacidade estimada consideram somente posições finais; a capacidade ainda não bloqueia movimentações acima do limite.
+- **Armazém e endereçamento:** estrutura hierárquica configurável, mapa geral responsivo e distinção entre endereços estruturais e posições finais de armazenagem. Endereços-pai exibem a ocupação média das posições finais descendentes com capacidade/unidade compatível, sem somar medidas incompatíveis. A capacidade ainda não bloqueia movimentações acima do limite.
 - **Materiais e estoque:** cadastro e saldos separados em disponível, reservado, bloqueado e a revisar, com total registrado para reconciliação. A reposição compara o estoque mínimo ao saldo disponível em posições finais ativas. Materiais configurados para rastreio exigem lote; a data de validade ainda não é cadastrada pelo fluxo normal de entrada.
 - **Movimentações:** entradas, saídas, transferências, ajustes, estornos e registro rastreável de devoluções de obra por função transacional do banco. A condição informada e a obra de origem ficam na referência/observações.
-- **Inventário:** sessões de contagem, quantidade esperada e contada, divergências e histórico. Uma sessão concluída não aceita novas contagens.
+- **Inventário:** sessões de contagem, quantidade esperada e contada, divergências e histórico. A contagem concluída mais recente de cada material/endereço/lote substitui a anterior na acuracidade do dashboard, sem apagar o histórico. Sessões em andamento não entram no indicador.
 - **Tarefas:** Kanban integrado ao armazém; mudar uma tarefa não altera o estoque.
 - **Exportação para ERP:** CSV, XLSX e JSON com prévia, seleção e mapeamento de campos, filtros de data e modelos reutilizáveis. Exportar não sincroniza com o ERP.
 - **Usuários e configurações:** perfis de organização e atributos personalizados dos materiais, conforme permissões.
@@ -65,6 +65,8 @@ O login demonstrativo não aceita e-mail ou senha arbitrários e não altera a s
 O layout se adapta a computadores, tablets e celulares. Em telas pequenas, as tabelas gerais são apresentadas como cartões de leitura; os detalhes do mapa também usam cartões responsivos, e a página evita rolagem horizontal global. As tabelas usam paginação no conjunto de dados carregado; consultas gerais ainda têm um limite de carregamento por lista e não são destinadas a volumes ilimitados nesta versão acadêmica.
 
 As regras de classificação dos saldos, tratamento de registros legados e limitações de endereçamento estão detalhadas em [docs/REGRAS-ENDERECAMENTO-ESTOQUE.md](docs/REGRAS-ENDERECAMENTO-ESTOQUE.md).
+A Gestão pode conferir os saldos atuais contra o livro de movimentações antes de optar por reconstruí-los. A rotina exige revisão e confirmação, preserva o histórico e cancela a reconstrução quando encontra saldo negativo no histórico ou saldo positivo sem movimentação correspondente. No ambiente de demonstração, a conferência inicial de 97,5% é identificada como dado fictício e não deve ser interpretada como inventário físico real.
+
 
 ## Comandos úteis
 
