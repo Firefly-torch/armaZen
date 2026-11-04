@@ -11,6 +11,7 @@ import {
 import { WarehouseMap } from "@/components/warehouse/warehouse-map";
 import { supabase } from "@/integrations/supabase/client";
 import { getInventoryAccuracy, getReplenishmentSuggestions } from "@/lib/dashboard-metrics";
+import { getStorageLocationIds, summarizeMaterialBalances } from "@/lib/warehouse-stock";
 import { startDemoSession, type DemoRole } from "@/integrations/supabase/admin-auth";
 import type { User } from "@supabase/supabase-js";
 
@@ -378,8 +379,22 @@ function Index() {
     }
   }, [inventorySessions, selectedInventoryId]);
 
-  // Indicadores limitados ao armazém e ao período selecionados.
-  // Quantidades são sempre somadas por unidade de medida, nunca entre unidades incompatíveis.
+  const activeWarehouseIds = new Set(warehouses.filter((warehouse) => warehouse.active).map((warehouse) => warehouse.id));
+  const storagePositionIds = useMemo(
+    () => getStorageLocationIds(locations, levels, activeWarehouseIds),
+    [locations, levels, warehouses],
+  );
+  const stockSummaries = useMemo(
+    () => summarizeMaterialBalances(materials, locations, levels, balances, activeWarehouseIds),
+    [materials, locations, levels, balances, warehouses],
+  );
+  const storageLocationOptions = locations.filter((location) => storagePositionIds.has(location.id));
+  const destinationLocationOptions = storageLocationOptions.filter((location) => location.status !== "bloqueado");
+  const sourceLocationOptions = locations.filter((location) =>
+    location.active && (storagePositionIds.has(location.id) || balances.some((balance) => balance.location_id === location.id && Number(balance.quantity) > 0)),
+  );
+
+  // Indicadores de disponibilidade usam somente posições finais válidas.
   const totals = useMemo(() => {
     const scopedLocations = locations.filter((location) =>
       dashboardWarehouseId === "todos" || location.warehouse_id === dashboardWarehouseId
@@ -388,17 +403,11 @@ function Index() {
     const scopedBalances = balances.filter((balance) =>
       dashboardWarehouseId === "todos" || scopedLocationIds.has(balance.location_id)
     );
+    const scopedStorageLocationIds = getStorageLocationIds(scopedLocations, levels, activeWarehouseIds);
     const availableLocationIds = new Set(scopedLocations
-      .filter((location) => location.active && location.status === "disponivel")
+      .filter((location) => scopedStorageLocationIds.has(location.id) && location.status === "disponivel")
       .map((location) => location.id));
     const availableBalances = scopedBalances.filter((balance) => availableLocationIds.has(balance.location_id));
-    const quantityByUnit = new Map<string, number>();
-    scopedBalances.forEach((balance) => {
-      const quantity = Number(balance.quantity || 0);
-      const unit = materials.find((material) => material.id === balance.material_id)?.unit || "un";
-      quantityByUnit.set(unit, (quantityByUnit.get(unit) ?? 0) + quantity);
-    });
-
     const since = Date.now() - Number(period) * 86400000;
     const scopedMovementsAll = movements.filter((movement) =>
       dashboardWarehouseId === "todos" ||
@@ -419,17 +428,10 @@ function Index() {
       (task.location_id != null && scopedLocationIds.has(task.location_id))
     );
     const open = scopedTasks.filter((task) => task.status !== "concluida");
-    const storageLocations = scopedLocations.filter((location) =>
-      location.active && levels.some((level) => level.id === location.level_id && level.is_storage)
-    );
+    const storageLocations = scopedLocations.filter((location) => scopedStorageLocationIds.has(location.id));
     const occupiedLocations = storageLocations.filter((location) =>
       scopedBalances.some((balance) => balance.location_id === location.id && Number(balance.quantity) > 0)
     ).length;
-    const unitSummary = [...quantityByUnit.entries()]
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([unit, quantity]) => `${new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 2 }).format(quantity)} ${unit}`)
-      .join(" · ");
-
     const movementDays = Array.from({ length: 7 }, (_, index) => {
       const date = new Date();
       date.setHours(0, 0, 0, 0);
@@ -447,8 +449,7 @@ function Index() {
 
     return {
       materials: materials.filter((material) => material.status === "ativo" || material.status === "active").length,
-      locations: scopedLocations.filter((location) => location.active).length,
-      units: unitSummary || "0",
+      locations: storageLocations.length,
       lowStock: lowStockItems.length,
       lowStockItems,
       movements: scopedMovements.length,
@@ -469,22 +470,23 @@ function Index() {
       })),
       locationStatusCounts: locationStatuses.map((status) => ({
         status,
-        count: scopedLocations.filter((location) => location.active && location.status === status).length,
+        count: storageLocations.filter((location) => location.status === status).length,
       })),
       occupancy: storageLocations.length ? Math.round((occupiedLocations / storageLocations.length) * 100) : null,
       occupiedLocations,
       storageLocations: storageLocations.length,
       movementDays,
     };
-  }, [materials, locations, levels, balances, movements, tasks, counts, period, dashboardWarehouseId]);
+  }, [materials, locations, levels, balances, movements, tasks, counts, period, dashboardWarehouseId, warehouses]);
 
   const allReplenishmentSuggestions = useMemo(() => {
+    const validStorageLocationIds = getStorageLocationIds(locations, levels, activeWarehouseIds);
     const availableLocationIds = new Set(locations
-      .filter((location) => location.active && location.status === "disponivel")
+      .filter((location) => validStorageLocationIds.has(location.id) && location.status === "disponivel")
       .map((location) => location.id));
     const availableBalances = balances.filter((balance) => availableLocationIds.has(balance.location_id));
     return getReplenishmentSuggestions(materials, availableBalances);
-  }, [materials, balances, locations]);
+  }, [materials, balances, locations, levels, warehouses]);
 
   const selectedMapWarehouseId = mapWarehouseId && warehouses.some((warehouse) => warehouse.id === mapWarehouseId && warehouse.active)
     ? mapWarehouseId
@@ -585,7 +587,7 @@ function Index() {
       </div>
       <div className="flex flex-wrap items-center justify-between gap-2 border-t bg-muted/30 px-5 py-3 text-xs text-muted-foreground sm:px-6">
         <span>Dados registrados no Supabase · análise dos últimos {period} dias</span>
-        <span>Unidades de medida permanecem separadas nos totais de estoque.</span>
+        <span>Disponível considera apenas posições finais ativas e disponíveis; reservado, bloqueado e saldos em revisão ficam separados.</span>
       </div>
     </section>
 
@@ -638,7 +640,7 @@ function Index() {
         </div>
         <div className="mt-4 grid grid-cols-2 gap-2 text-sm">
           <div className="rounded-lg bg-muted/50 p-3"><p className="text-xs text-muted-foreground">Materiais ativos</p><p className="mt-1 text-xl font-semibold tabular-nums">{totals.materials}</p></div>
-          <div className="rounded-lg bg-muted/50 p-3"><p className="text-xs text-muted-foreground">Endereços ativos</p><p className="mt-1 text-xl font-semibold tabular-nums">{totals.locations}</p></div>
+          <div className="rounded-lg bg-muted/50 p-3"><p className="text-xs text-muted-foreground">Posições de armazenagem</p><p className="mt-1 text-xl font-semibold tabular-nums">{totals.locations}</p></div>
         </div>
         <div className="mt-4 space-y-2">
           {totals.locationStatusCounts.map(({ status, count }) => <div key={status} className="flex items-center justify-between text-xs">
@@ -648,12 +650,11 @@ function Index() {
       </Panel>
     </div>
 
-    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
       {[
         { label: `Movimentações · ${period} dias`, value: totals.movements, Icon: ArrowLeftRight, detail: "Registros no período" },
         { label: "Tarefas em aberto", value: totals.pending, Icon: ClipboardList, detail: "Atividades não concluídas" },
         { label: `Devoluções de obras · ${period} dias`, value: totals.returns, Icon: CheckCircle2, detail: "Entradas identificadas como devolução" },
-        { label: "Saldo por unidade", value: totals.units, Icon: Boxes, detail: "Totais separados por unidade de medida" },
       ].map(({ label, value, Icon, detail }) => <article key={label} className="rounded-xl border bg-card p-4 shadow-sm">
         <div className="flex items-center justify-between gap-2"><p className="text-xs font-medium text-muted-foreground">{label}</p><Icon className="h-4 w-4 text-primary"/></div>
         <p className="mt-3 break-words text-xl font-bold tabular-nums">{orgId ? value : "—"}</p>
@@ -811,7 +812,7 @@ function Index() {
       <Table headers={["Armazém","Nível","Ordem","Armazenagem","Ações"]} rows={levels.map(l=>[pretty(warehouses.find(w=>w.id===l.warehouse_id)?.name),l.name,l.sort_order,l.is_storage?"Sim":"Não",canManage?<button className="rounded border p-2" title="Editar nível" onClick={()=>setLevelForm({id:l.id,warehouse_id:l.warehouse_id,name:l.name,sort_order:String(l.sort_order),is_storage:l.is_storage})}><Pencil className="h-4 w-4"/></button>:"—"])}/>
     </Panel>
     <Panel title="Endereços" description="Estados: disponível, reservado ou bloqueado. A posição visual é esquemática, não uma planta real.">
-      {canManage&&<form className="mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4" onSubmit={e=>{e.preventDefault();void runSave(async()=>{const p={org_id:orgId,warehouse_id:locForm.warehouse_id,level_id:locForm.level_id,parent_id:locForm.parent_id||null,code:locForm.code.trim(),name:locForm.name.trim(),status:locForm.status,capacity:locForm.capacity?Number(locForm.capacity):null,capacity_unit:locForm.capacity_unit||null,notes:locForm.notes||null,active:locForm.id?(locations.find(l=>l.id===locForm.id)?.active??true):true,updated_at:new Date().toISOString()};const q=locForm.id?db.from("locations").update(p).eq("id",locForm.id):db.from("locations").insert(p);const {error}=await q;if(error)throw error;setLocForm({id:"",warehouse_id:"",level_id:"",parent_id:"",code:"",name:"",status:"disponivel",capacity:"",capacity_unit:"un",notes:""});},"Endereço salvo.");}}><SelectField label="Armazém" value={locForm.warehouse_id} onChange={v=>setLocForm({...locForm,warehouse_id:v,level_id:"",parent_id:""})} required options={warehouses.filter(w=>w.active).map(w=>({value:w.id,label:w.name}))}/><SelectField label="Nível" value={locForm.level_id} onChange={v=>setLocForm({...locForm,level_id:v})} required options={levels.filter(l=>l.warehouse_id===locForm.warehouse_id).map(l=>({value:l.id,label:l.name}))}/><SelectField label="Endereço pai" value={locForm.parent_id} onChange={v=>setLocForm({...locForm,parent_id:v})} options={locations.filter(l=>l.warehouse_id===locForm.warehouse_id&&l.id!==locForm.id).map(l=>({value:l.id,label:`${l.code} — ${l.name}`}))}/><Field label="Código" value={locForm.code} onChange={v=>setLocForm({...locForm,code:v})} required/><Field label="Nome" value={locForm.name} onChange={v=>setLocForm({...locForm,name:v})} required/><SelectField label="Situação" value={locForm.status} onChange={v=>setLocForm({...locForm,status:v})} options={locationStatuses.map(v=>({value:v,label:v.replaceAll("_"," ")}))} required/><Field label="Capacidade" type="number" min={0} step={0.01} value={locForm.capacity} onChange={v=>setLocForm({...locForm,capacity:v})}/><Field label="Unidade da capacidade" value={locForm.capacity_unit} onChange={v=>setLocForm({...locForm,capacity_unit:v})}/><Field label="Observações" value={locForm.notes} onChange={v=>setLocForm({...locForm,notes:v})}/><div className="flex items-end gap-2"><button className="h-10 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground" disabled={saving}>Salvar endereço</button>{locForm.id&&<button type="button" className="h-10 rounded-lg border px-3 text-sm" onClick={()=>setLocForm({id:"",warehouse_id:"",level_id:"",parent_id:"",code:"",name:"",status:"disponivel",capacity:"",capacity_unit:"un",notes:""})}>Cancelar</button>}</div></form>}
+      {canManage&&<form className="mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4" onSubmit={e=>{e.preventDefault();void runSave(async()=>{const p={org_id:orgId,warehouse_id:locForm.warehouse_id,level_id:locForm.level_id,parent_id:locForm.parent_id||null,code:locForm.code.trim(),name:locForm.name.trim(),status:locForm.status,capacity:locForm.capacity?Number(locForm.capacity):null,capacity_unit:locForm.capacity_unit||null,notes:locForm.notes||null,active:locForm.id?(locations.find(l=>l.id===locForm.id)?.active??true):true,updated_at:new Date().toISOString()};const q=locForm.id?db.from("locations").update(p).eq("id",locForm.id):db.from("locations").insert(p);const {error}=await q;if(error)throw error;setLocForm({id:"",warehouse_id:"",level_id:"",parent_id:"",code:"",name:"",status:"disponivel",capacity:"",capacity_unit:"un",notes:""});},"Endereço salvo.");}}><SelectField label="Armazém" value={locForm.warehouse_id} onChange={v=>setLocForm({...locForm,warehouse_id:v,level_id:"",parent_id:""})} required options={warehouses.filter(w=>w.active).map(w=>({value:w.id,label:w.name}))}/><SelectField label="Nível" value={locForm.level_id} onChange={v=>setLocForm({...locForm,level_id:v})} required options={levels.filter(l=>l.warehouse_id===locForm.warehouse_id).map(l=>({value:l.id,label:l.name}))}/><SelectField label="Endereço pai" value={locForm.parent_id} onChange={v=>setLocForm({...locForm,parent_id:v})} options={locations.filter(l=>l.active&&l.warehouse_id===locForm.warehouse_id&&l.id!==locForm.id&&!levels.find(level=>level.id===l.level_id)?.is_storage).map(l=>({value:l.id,label:`${l.code} — ${l.name}`}))}/><Field label="Código" value={locForm.code} onChange={v=>setLocForm({...locForm,code:v})} required/><Field label="Nome" value={locForm.name} onChange={v=>setLocForm({...locForm,name:v})} required/><SelectField label="Situação" value={locForm.status} onChange={v=>setLocForm({...locForm,status:v})} options={locationStatuses.map(v=>({value:v,label:v.replaceAll("_"," ")}))} required/><Field label="Capacidade" type="number" min={0} step={0.01} value={locForm.capacity} onChange={v=>setLocForm({...locForm,capacity:v})}/><Field label="Unidade da capacidade" value={locForm.capacity_unit} onChange={v=>setLocForm({...locForm,capacity_unit:v})}/><Field label="Observações" value={locForm.notes} onChange={v=>setLocForm({...locForm,notes:v})}/><div className="flex items-end gap-2"><button className="h-10 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground" disabled={saving}>Salvar endereço</button>{locForm.id&&<button type="button" className="h-10 rounded-lg border px-3 text-sm" onClick={()=>setLocForm({id:"",warehouse_id:"",level_id:"",parent_id:"",code:"",name:"",status:"disponivel",capacity:"",capacity_unit:"un",notes:""})}>Cancelar</button>}</div></form>}
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <div className="flex min-w-0 flex-1 items-center gap-2">
           <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -886,33 +887,136 @@ function Index() {
     />
   </div>;
 
+  const materialRows = filtered(materials, ["code", "description", "category", "barcode"])
+    .filter((material) =>
+      (materialFilters.status === "todos" || material.status === materialFilters.status) &&
+      (materialFilters.stock === "todos" ||
+        (materialFilters.stock === "baixo"
+          ? (stockSummaries.get(material.id)?.availableQuantity ?? 0) < Number(material.min_stock || 0)
+          : (stockSummaries.get(material.id)?.availableQuantity ?? 0) >= Number(material.min_stock || 0)))
+    )
+    .map((material) => {
+      const stock = stockSummaries.get(material.id);
+      const available = stock?.availableQuantity ?? 0;
+      const reserved = stock?.reservedQuantity ?? 0;
+      const blocked = stock?.blockedQuantity ?? 0;
+      const review = stock?.reviewQuantity ?? 0;
+      const total = stock?.totalQuantity ?? 0;
+      const low = available < Number(material.min_stock || 0);
+      return [
+        <div className="min-w-[12rem]">
+          <p className="font-semibold">{material.code}</p>
+          <p className="text-xs text-muted-foreground">{material.description}</p>
+        </div>,
+        pretty(material.category),
+        material.unit,
+        <span className="font-semibold tabular-nums text-emerald-700 dark:text-emerald-300">{dashboardNumber(available)}</span>,
+        reserved ? <span className="tabular-nums text-amber-700 dark:text-amber-300">{dashboardNumber(reserved)}</span> : "—",
+        blocked ? <span className="tabular-nums text-red-700 dark:text-red-300">{dashboardNumber(blocked)}</span> : "—",
+        review ? <span className="font-semibold tabular-nums text-orange-700 dark:text-orange-300">{dashboardNumber(review)}</span> : "—",
+        <span className="tabular-nums">{dashboardNumber(total)}</span>,
+        <span className="tabular-nums">{dashboardNumber(Number(material.min_stock || 0))}</span>,
+        low ? <span className="font-semibold text-amber-700 dark:text-amber-300">Abaixo do mínimo</span> : <span className="text-emerald-700 dark:text-emerald-300">Normal</span>,
+        statusPill(material.status),
+        <div className="flex gap-2">
+          {canManage && <button className="rounded border p-2" title="Editar" onClick={() => {
+            setMatForm({id:material.id,code:material.code,description:material.description,category:material.category,unit:material.unit,barcode:material.barcode??"",min_stock:String(material.min_stock),status:material.status,tracks_lot:material.tracks_lot,attributes:JSON.stringify(material.attributes??{},null,2)});
+            setAttributeValues(Object.fromEntries(Object.entries(material.attributes??{}).map(([key,value])=>[key,String(value??"")])));
+          }}><Pencil className="h-4 w-4"/></button>}
+          {canManage && <button className="rounded border p-2" title="Alternar status" onClick={() => void runSave(async () => {
+            const {error}=await db.from("materials").update({status:material.status==="ativo"?"inativo":"ativo",updated_at:new Date().toISOString()}).eq("id",material.id).eq("org_id",orgId);
+            if(error)throw error;
+          },"Status atualizado.")}>{material.status==="ativo"?<Ban className="h-4 w-4"/>:<Check className="h-4 w-4"/>}</button>}
+        </div>,
+      ];
+    });
+
+  const balanceAddressPath = (locationId: string) => {
+    const path: string[] = [];
+    let current = locations.find((location) => location.id === locationId);
+    let depth = 0;
+    while (current && depth < 20) {
+      path.unshift(String(current.code));
+      current = current.parent_id ? locations.find((location) => location.id === current!.parent_id) : undefined;
+      depth += 1;
+    }
+    return path.join(" / ");
+  };
+  const sortedBalanceRows = balances
+    .filter((balance) => Number(balance.quantity) > 0)
+    .sort((a, b) => {
+      const codeA = materials.find((material) => material.id === a.material_id)?.code ?? "";
+      const codeB = materials.find((material) => material.id === b.material_id)?.code ?? "";
+      const addressA = locations.find((location) => location.id === a.location_id)?.code ?? "";
+      const addressB = locations.find((location) => location.id === b.location_id)?.code ?? "";
+      return codeA.localeCompare(codeB, "pt-BR", { numeric: true }) ||
+        addressA.localeCompare(addressB, "pt-BR", { numeric: true }) ||
+        String(a.lot ?? "").localeCompare(String(b.lot ?? ""), "pt-BR", { numeric: true });
+    });
+  const getBalanceClassification = (balance: AnyRow) => {
+    const location = locations.find((item) => item.id === balance.location_id);
+    if (!location || !location.active || !activeWarehouseIds.has(location.warehouse_id)) return "Endereço inativo/indisponível";
+    if (!storagePositionIds.has(location.id)) return "Estrutural / não armazenável";
+    if (location.status === "reservado") return "Reservado";
+    if (location.status === "bloqueado") return "Bloqueado";
+    return "Disponível";
+  };
+
   const materialsSection = <div className="space-y-5">
-    <Panel title="Planejamento de reposição" description="Lista de materiais com saldo em endereços ativos e disponíveis abaixo do mínimo. Endereços bloqueados, reservados ou inativos não entram no saldo considerado. A quantidade não considera compras pendentes ou demandas ainda não registradas.">
-      {allReplenishmentSuggestions.length ? <Table headers={["Código","Material","Saldo atual","Estoque mínimo","Necessidade estimada"]} rows={allReplenishmentSuggestions.map((item) => [
+    <Panel title="Planejamento de reposição" description="A necessidade estimada usa somente saldos disponíveis em posições finais de armazenagem ativas. Reservas, bloqueios, endereços inativos e saldos em revisão não são tratados como disponibilidade.">
+      {allReplenishmentSuggestions.length ? <Table headers={["Código","Material","Disponível","Estoque mínimo","Necessidade estimada"]} rows={allReplenishmentSuggestions.map((item) => [
         item.code,
         item.description,
         `${dashboardNumber(item.currentQuantity)} ${item.unit}`,
         `${dashboardNumber(item.minimumQuantity)} ${item.unit}`,
-        <span className="font-semibold text-amber-700 dark:text-amber-300">+{dashboardNumber(item.suggestedQuantity)} {item.unit}</span>,
-      ])}/> : <Empty>Nenhum material ativo está abaixo do estoque mínimo cadastrado.</Empty>}
+        <span className="font-semibold text-amber-700 dark:text-amber-300">+${dashboardNumber(item.suggestedQuantity)} {item.unit}</span>,
+      ])}/> : <Empty>Nenhum material ativo está abaixo do estoque mínimo considerando os saldos disponíveis.</Empty>}
     </Panel>
-    <Panel title={matForm.id?"Editar material":"Cadastrar material"} description="Os saldos são lidos de inventory_balances; não são editados diretamente nesta tela.">
+    <Panel title={matForm.id?"Editar material":"Cadastrar material"} description="O cadastro define unidade e estoque mínimo. Os saldos são originados exclusivamente por movimentações e ajustes de inventário.">
       {canManage?<form className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4" onSubmit={e=>{e.preventDefault();void runSave(async()=>{let storedAttrs:AnyRow={};try{storedAttrs=JSON.parse(matForm.attributes||"{}");if(!storedAttrs||Array.isArray(storedAttrs)||typeof storedAttrs!=="object")throw new Error();}catch{throw new Error("Os atributos já salvos deste material estão inválidos.");}const attrs:AnyRow={...storedAttrs};for(const attribute of materialAttributes){const raw=attributeValues[attribute.key]??String(storedAttrs[attribute.key]??"");if(attribute.required&&!String(raw).trim())throw new Error(`Preencha o campo obrigatório: ${attribute.label}.`);if(!String(raw).trim()){delete attrs[attribute.key];continue;}if(attribute.data_type==="number"){const numeric=Number(raw);if(!Number.isFinite(numeric))throw new Error(`O campo ${attribute.label} precisa ser numérico.`);attrs[attribute.key]=numeric;}else if(attribute.data_type==="boolean"){attrs[attribute.key]=raw==="true";}else{attrs[attribute.key]=raw;}}const p={org_id:orgId,code:matForm.code.trim(),description:matForm.description.trim(),category:matForm.category.trim(),unit:matForm.unit.trim(),barcode:matForm.barcode.trim()||null,min_stock:Number(matForm.min_stock),status:matForm.status,tracks_lot:matForm.tracks_lot,attributes:attrs,updated_at:new Date().toISOString()};const q=matForm.id?db.from("materials").update(p).eq("id",matForm.id):db.from("materials").insert(p);const {error}=await q;if(error)throw error;setMatForm({id:"",code:"",description:"",category:"Geral",unit:"un",barcode:"",min_stock:"0",status:"ativo",tracks_lot:false,attributes:"{}"});setAttributeValues({});},"Material salvo.");}}><Field label="Código interno" value={matForm.code} onChange={v=>setMatForm({...matForm,code:v})} required/><Field label="Descrição" value={matForm.description} onChange={v=>setMatForm({...matForm,description:v})} required/><Field label="Categoria" value={matForm.category} onChange={v=>setMatForm({...matForm,category:v})} required/><Field label="Unidade de medida" value={matForm.unit} onChange={v=>setMatForm({...matForm,unit:v})} required/><Field label="Código de barras (opcional)" value={matForm.barcode} onChange={v=>setMatForm({...matForm,barcode:v})}/><Field label="Estoque mínimo" type="number" min={0} step={0.01} value={matForm.min_stock} onChange={v=>setMatForm({...matForm,min_stock:v})} required/><SelectField label="Status" value={matForm.status} onChange={v=>setMatForm({...matForm,status:v})} options={[{value:"ativo",label:"Ativo"},{value:"inativo",label:"Inativo"}]} required/><label className="flex items-center gap-2 self-end pb-2 text-sm"><input type="checkbox" checked={matForm.tracks_lot} onChange={e=>setMatForm({...matForm,tracks_lot:e.target.checked})}/> Controla lote/validade</label><div className="grid gap-3 sm:col-span-2 sm:grid-cols-2 xl:col-span-4">{materialAttributes.length?materialAttributes.map(attribute=>attribute.data_type==="boolean"?<SelectField key={attribute.key} label={`${attribute.label}${attribute.required?" *":""}`} value={attributeValues[attribute.key]??""} onChange={value=>setAttributeValues(current=>({...current,[attribute.key]:value}))} required={attribute.required} options={[{value:"true",label:"Sim"},{value:"false",label:"Não"}]}/>:<Field key={attribute.key} label={`${attribute.label}${attribute.required?" *":""}`} type={attribute.data_type==="number"?"number":attribute.data_type==="date"?"date":"text"} value={attributeValues[attribute.key]??""} onChange={value=>setAttributeValues(current=>({...current,[attribute.key]:value}))} required={attribute.required}/>):<p className="text-xs text-muted-foreground">A Gestão pode configurar campos adicionais em Usuários e configurações.</p>}</div><div className="flex items-end gap-2"><button disabled={saving} className="h-10 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground">{matForm.id?"Salvar alterações":"Cadastrar material"}</button>{matForm.id&&<button type="button" className="h-10 rounded-lg border px-3 text-sm" onClick={()=>{setMatForm({id:"",code:"",description:"",category:"Geral",unit:"un",barcode:"",min_stock:"0",status:"ativo",tracks_lot:false,attributes:"{}"});setAttributeValues({});}}>Cancelar</button>}</div></form>:<Empty>O perfil atual não possui permissão para cadastrar ou editar materiais.</Empty>}
     </Panel>
-    <Panel title="Materiais e saldos" description="Pesquise por código, descrição, categoria ou código de barras.">
+    <Panel title="Materiais e saldos" description="Os totais ficam separados por condição operacional. 'Total registrado' preserva todos os lançamentos; apenas 'Disponível' deve orientar separação e necessidade de reposição.">
+      <div className="mb-3 grid gap-3 rounded-xl border bg-muted/20 p-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div><p className="text-xs text-muted-foreground">Disponível</p><p className="mt-1 text-lg font-semibold text-emerald-700 dark:text-emerald-300">Pode ser considerado para separação</p></div>
+        <div><p className="text-xs text-muted-foreground">Reservado / bloqueado</p><p className="mt-1 text-sm font-medium">Existe fisicamente, mas não é saldo livre</p></div>
+        <div><p className="text-xs text-muted-foreground">A revisar</p><p className="mt-1 text-sm font-medium">Em endereço estrutural ou inativo</p></div>
+        <div><p className="text-xs text-muted-foreground">Total registrado</p><p className="mt-1 text-sm font-medium">Conferência contábil de todos os saldos</p></div>
+      </div>
       <div className="grid gap-3 md:grid-cols-3">
         <div className="min-w-0"><div className="flex gap-2"><Search className="mt-2.5 h-4 w-4 shrink-0 text-muted-foreground"/><input className="h-10 w-full min-w-0 rounded-lg border bg-background px-3 text-sm" placeholder="Código, descrição ou barras..." value={search} onChange={e=>setSearch(e.target.value)}/></div><p className="mt-1 text-[11px] text-muted-foreground">Compatível com leitor físico configurado como teclado.</p></div>
-        <SelectField label="Situação" value={materialFilters.status} onChange={value=>setMaterialFilters(current=>({...current,status:value}))} options={[{value:"todos",label:"Todas as situações"},{value:"ativo",label:"Ativos"},{value:"inativo",label:"Inativos"}]}/>
-        <SelectField label="Nível de estoque" value={materialFilters.stock} onChange={value=>setMaterialFilters(current=>({...current,stock:value}))} options={[{value:"todos",label:"Todos os níveis"},{value:"baixo",label:"Abaixo do mínimo"},{value:"normal",label:"No mínimo ou acima"}]}/>
+        <SelectField label="Situação do cadastro" value={materialFilters.status} onChange={value=>setMaterialFilters(current=>({...current,status:value}))} options={[{value:"todos",label:"Todas as situações"},{value:"ativo",label:"Ativos"},{value:"inativo",label:"Inativos"}]}/>
+        <SelectField label="Nível do saldo disponível" value={materialFilters.stock} onChange={value=>setMaterialFilters(current=>({...current,stock:value}))} options={[{value:"todos",label:"Todos os níveis"},{value:"baixo",label:"Disponível abaixo do mínimo"},{value:"normal",label:"Disponível no mínimo ou acima"}]}/>
       </div>
-      <Table headers={["Código","Descrição","Categoria","Unidade","Saldo total","Mínimo","Situação","Ações"]} rows={filtered(materials,["code","description","category","barcode"]).filter(m=>(materialFilters.status==="todos"||m.status===materialFilters.status)&&(materialFilters.stock==="todos"||(materialFilters.stock==="baixo"?balances.filter(b=>b.material_id===m.id).reduce((sum,b)=>sum+Number(b.quantity||0),0)<Number(m.min_stock||0):balances.filter(b=>b.material_id===m.id).reduce((sum,b)=>sum+Number(b.quantity||0),0)>=Number(m.min_stock||0)))).map(m=>{const qty=balances.filter(b=>b.material_id===m.id).reduce((s,b)=>s+Number(b.quantity||0),0);return [m.code,m.description,m.category,m.unit,qty,m.min_stock,qty<Number(m.min_stock||0)?<span className="font-semibold text-amber-700">Abaixo do mínimo</span>:statusPill(m.status),<div className="flex gap-2">{canManage&&<button className="rounded border p-2" title="Editar" onClick={()=>{setMatForm({id:m.id,code:m.code,description:m.description,category:m.category,unit:m.unit,barcode:m.barcode??"",min_stock:String(m.min_stock),status:m.status,tracks_lot:m.tracks_lot,attributes:JSON.stringify(m.attributes??{},null,2)});setAttributeValues(Object.fromEntries(Object.entries(m.attributes??{}).map(([key,value])=>[key,String(value??"")])));}}><Pencil className="h-4 w-4"/></button>}{canManage&&<button className="rounded border p-2" title="Alternar status" onClick={()=>void runSave(async()=>{const {error}=await db.from("materials").update({status:m.status==="ativo"?"inativo":"ativo",updated_at:new Date().toISOString()}).eq("id",m.id).eq("org_id",orgId);if(error)throw error;},"Status atualizado.")}>{m.status==="ativo"?<Ban className="h-4 w-4"/>:<Check className="h-4 w-4"/>}</button>}</div>]})}/>
+      <Table headers={["Material","Categoria","Unidade","Disponível","Reservado","Bloqueado","A revisar","Total registrado","Mínimo","Nível","Cadastro","Ações"]} rows={materialRows}/>
+      <p className="mt-2 text-xs text-muted-foreground">O indicador de estoque mínimo compara o mínimo cadastrado somente com o saldo disponível. Saldos em revisão não são descartados: permanecem listados abaixo para conferência e transferência.</p>
     </Panel>
-    <Panel title="Saldo por endereço" description="Lote e validade são exibidos quando registrados."><Table headers={["Material","Endereço","Lote","Quantidade","Unidade","Validade"]} rows={balances.filter(b=>Number(b.quantity)!==0).map(b=>[pretty(materials.find(m=>m.id===b.material_id)?.code),pretty(locations.find(l=>l.id===b.location_id)?.code),pretty(b.lot),b.quantity,pretty(materials.find(m=>m.id===b.material_id)?.unit),dateLabel(b.expiry_date)])}/></Panel>
+    <Panel title="Saldos por endereço" description="Ordenados por material e endereço. O caminho mostra a hierarquia completa; saldos em endereços estruturais ou inativos ficam destacados para revisão.">
+      <Table headers={["Material","Caminho do endereço","Classificação","Lote","Quantidade","Unidade","Validade"]} rows={sortedBalanceRows.map((balance) => {
+        const material = materials.find((item) => item.id === balance.material_id);
+        const location = locations.find((item) => item.id === balance.location_id);
+        const classification = getBalanceClassification(balance);
+        const needsReview = classification === "Estrutural / não armazenável" || classification === "Endereço inativo/indisponível";
+        return [
+          <div><p className="font-semibold">{material?.code ?? "Material"}</p><p className="text-xs text-muted-foreground">{material?.description ?? ""}</p></div>,
+          location ? balanceAddressPath(location.id) : "Endereço não encontrado",
+          needsReview ? <span className="font-semibold text-orange-700 dark:text-orange-300">{classification}</span> : statusPill(classification.toLowerCase().replaceAll(" ","_")),
+          pretty(balance.lot),
+          dashboardNumber(Number(balance.quantity)),
+          pretty(material?.unit),
+          dateLabel(balance.expiry_date),
+        ];
+      })}/>
+      {sortedBalanceRows.some((balance) => getBalanceClassification(balance) === "Estrutural / não armazenável" || getBalanceClassification(balance) === "Endereço inativo/indisponível") && (
+        <p className="mt-3 rounded-lg border border-amber-300/60 bg-amber-50/70 p-3 text-xs leading-5 text-amber-900 dark:border-amber-900 dark:bg-amber-950/25 dark:text-amber-100">
+          Existem saldos que não podem ser considerados disponibilidade operacional. Confira a posição física e registre uma transferência para um endereço final válido; o sistema não move esses saldos automaticamente.
+        </p>
+      )}
+    </Panel>
   </div>;
 
   const movementsSection = <div className="space-y-5">
     <Panel title="Registrar movimentação" description="Entrada, saída e transferência usam a função transacional do banco. Ajustes de inventário exigem contagem física e justificativa.">
-      {canOperate?<form className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3" onSubmit={e=>{e.preventDefault();void runSave(async()=>{const qty=Number(moveForm.quantity);if(!moveForm.material_id)throw new Error("Selecione um material.");if(!Number.isFinite(qty)||qty<=0)throw new Error("A quantidade precisa ser maior que zero.");if(moveForm.type==="entrada"&&!moveForm.to_location_id)throw new Error("Selecione o endereço de destino.");if(moveForm.type==="saida"&&!moveForm.from_location_id)throw new Error("Selecione o endereço de origem.");if(moveForm.type==="transferencia"&&(!moveForm.from_location_id||!moveForm.to_location_id||moveForm.from_location_id===moveForm.to_location_id))throw new Error("Transferência exige origem e destino diferentes.");if(moveForm.type==="ajuste"){throw new Error("Use a ação de ajuste físico no formulário de inventário abaixo.");}const {error}=await db.rpc("register_movement",{_type:moveForm.type,_material:moveForm.material_id,_qty:qty,_org:orgId,_from:moveForm.from_location_id||null,_to:moveForm.to_location_id||null,_lot:moveForm.lot||"",_reference:moveForm.reference||"",_notes:[moveForm.reason,moveForm.notes].filter(Boolean).join(" — "),_request:crypto.randomUUID()});if(error)throw error;setMoveForm({...moveForm,quantity:"1",lot:"",reference:"",reason:"",notes:""});},"Movimentação registrada.");}}><SelectField label="Tipo" value={moveForm.type} onChange={v=>setMoveForm({...moveForm,type:v})} options={movementTypes.filter(v=>v!=="ajuste").map(v=>({value:v,label:v.replaceAll("_"," ")}))} required/><SelectField label="Material" value={moveForm.material_id} onChange={v=>setMoveForm({...moveForm,material_id:v})} options={materials.filter(m=>m.status==="ativo"||m.status==="active").map(m=>({value:m.id,label:`${m.code} — ${m.description}`}))} required/><Field label="Quantidade" type="number" min={0.01} step={0.01} value={moveForm.quantity} onChange={v=>setMoveForm({...moveForm,quantity:v})} required/><SelectField label="Origem" value={moveForm.from_location_id} onChange={v=>setMoveForm({...moveForm,from_location_id:v})} options={locations.filter(l=>l.active&&l.status!=="bloqueado").map(l=>({value:l.id,label:`${l.code} — ${l.name}`}))}/><SelectField label="Destino" value={moveForm.to_location_id} onChange={v=>setMoveForm({...moveForm,to_location_id:v})} options={locations.filter(l=>l.active&&l.status!=="bloqueado").map(l=>({value:l.id,label:`${l.code} — ${l.name}`}))}/><Field label="Lote (quando aplicável)" value={moveForm.lot} onChange={v=>setMoveForm({...moveForm,lot:v})}/><Field label="Referência documental" value={moveForm.reference} onChange={v=>setMoveForm({...moveForm,reference:v})}/><Field label="Motivo" value={moveForm.reason} onChange={v=>setMoveForm({...moveForm,reason:v})}/><Field label="Observações" value={moveForm.notes} onChange={v=>setMoveForm({...moveForm,notes:v})}/><div className="flex items-end"><button disabled={saving} className="h-10 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground">Confirmar movimentação</button></div></form>:<Empty>O perfil atual não possui permissão para registrar movimentações.</Empty>}
+      {canOperate?<form className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3" onSubmit={e=>{e.preventDefault();void runSave(async()=>{const qty=Number(moveForm.quantity);if(!moveForm.material_id)throw new Error("Selecione um material.");if(!Number.isFinite(qty)||qty<=0)throw new Error("A quantidade precisa ser maior que zero.");if(moveForm.type==="entrada"&&!moveForm.to_location_id)throw new Error("Selecione o endereço de destino.");if(moveForm.type==="saida"&&!moveForm.from_location_id)throw new Error("Selecione o endereço de origem.");if(moveForm.type==="transferencia"&&(!moveForm.from_location_id||!moveForm.to_location_id||moveForm.from_location_id===moveForm.to_location_id))throw new Error("Transferência exige origem e destino diferentes.");if(moveForm.type==="ajuste"){throw new Error("Use a ação de ajuste físico no formulário de inventário abaixo.");}const {error}=await db.rpc("register_movement",{_type:moveForm.type,_material:moveForm.material_id,_qty:qty,_org:orgId,_from:moveForm.from_location_id||null,_to:moveForm.to_location_id||null,_lot:moveForm.lot||"",_reference:moveForm.reference||"",_notes:[moveForm.reason,moveForm.notes].filter(Boolean).join(" — "),_request:crypto.randomUUID()});if(error)throw error;setMoveForm({...moveForm,quantity:"1",lot:"",reference:"",reason:"",notes:""});},"Movimentação registrada.");}}><SelectField label="Tipo" value={moveForm.type} onChange={v=>setMoveForm({...moveForm,type:v})} options={movementTypes.filter(v=>v!=="ajuste").map(v=>({value:v,label:v.replaceAll("_"," ")}))} required/><SelectField label="Material" value={moveForm.material_id} onChange={v=>setMoveForm({...moveForm,material_id:v})} options={materials.filter(m=>m.status==="ativo"||m.status==="active").map(m=>({value:m.id,label:`${m.code} — ${m.description}`}))} required/><Field label="Quantidade" type="number" min={0.01} step={0.01} value={moveForm.quantity} onChange={v=>setMoveForm({...moveForm,quantity:v})} required/><SelectField label="Origem" value={moveForm.from_location_id} onChange={v=>setMoveForm({...moveForm,from_location_id:v})} options={sourceLocationOptions.map(l=>({value:l.id,label:`${l.code} — ${l.name}${storagePositionIds.has(l.id)?"":" · saldo legado"}`}))}/><SelectField label="Destino" value={moveForm.to_location_id} onChange={v=>setMoveForm({...moveForm,to_location_id:v})} options={destinationLocationOptions.map(l=>({value:l.id,label:`${l.code} — ${l.name} · ${l.status}`}))}/><Field label="Lote (quando aplicável)" value={moveForm.lot} onChange={v=>setMoveForm({...moveForm,lot:v})}/><Field label="Referência documental" value={moveForm.reference} onChange={v=>setMoveForm({...moveForm,reference:v})}/><Field label="Motivo" value={moveForm.reason} onChange={v=>setMoveForm({...moveForm,reason:v})}/><Field label="Observações" value={moveForm.notes} onChange={v=>setMoveForm({...moveForm,notes:v})}/><div className="flex items-end"><button disabled={saving} className="h-10 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground">Confirmar movimentação</button></div></form>:<Empty>O perfil atual não possui permissão para registrar movimentações.</Empty>}
     </Panel>
     <Panel title="Registrar devolução de obra" description="Registra o retorno como entrada de estoque e identifica a obra de origem e a condição do material no histórico.">
       {canOperate ? <form className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3" onSubmit={(event) => {
@@ -951,7 +1055,7 @@ function Index() {
         <SelectField label="Material devolvido" value={returnForm.material_id} onChange={(value) => setReturnForm({ ...returnForm, material_id:value })} required options={materials.filter((material) => material.status === "ativo" || material.status === "active").map((material) => ({ value:material.id, label:`${material.code} — ${material.description}` }))}/>
         <Field label="Quantidade devolvida" type="number" min={0.001} step={0.001} value={returnForm.quantity} onChange={(value) => setReturnForm({ ...returnForm, quantity:value })} required/>
         <SelectField label="Condição do material" value={returnForm.condition} onChange={(value) => setReturnForm({ ...returnForm, condition:value })} required options={[{value:"apto",label:"Conferido e apto para reutilização"},{value:"avaliacao",label:"Avariado / precisa de avaliação"}]}/>
-        <SelectField label="Endereço de destino" value={returnForm.destination_location_id} onChange={(value) => setReturnForm({ ...returnForm, destination_location_id:value })} required options={locations.filter((location) => location.active && location.status !== "bloqueado").map((location) => ({ value:location.id, label:`${location.code} — ${location.name} · ${location.status}` }))}/>
+        <SelectField label="Endereço de destino" value={returnForm.destination_location_id} onChange={(value) => setReturnForm({ ...returnForm, destination_location_id:value })} required options={destinationLocationOptions.map((location) => ({ value:location.id, label:`${location.code} — ${location.name} · ${location.status}` }))}/>
         <Field label="Lote (quando aplicável)" value={returnForm.lot} onChange={(value) => setReturnForm({ ...returnForm, lot:value })}/>
         <Field label="Observações da conferência" value={returnForm.notes} onChange={(value) => setReturnForm({ ...returnForm, notes:value })} placeholder="Ex.: embalagem danificada, faltando componente..."/>
         <div className="sm:col-span-2 xl:col-span-3 rounded-lg border border-amber-300/60 bg-amber-50/70 p-3 text-xs leading-5 text-amber-900 dark:border-amber-900 dark:bg-amber-950/25 dark:text-amber-100">
@@ -962,7 +1066,7 @@ function Index() {
     </Panel>
 
     <Panel title="Ajuste de inventário" description="Registra a contagem física e diferença por meio da rotina de ajuste do banco.">
-      {canOperate?<AdjustmentForm orgId={orgId} materials={materials} locations={locations} saving={saving} onSave={runSave} onDone={refresh}/>:<Empty>O perfil atual não possui permissão para ajustar estoque.</Empty>}
+      {canOperate?<AdjustmentForm orgId={orgId} materials={materials} locations={storageLocationOptions} saving={saving} onSave={runSave} onDone={refresh}/>:<Empty>O perfil atual não possui permissão para ajustar estoque.</Empty>}
     </Panel>
     <Panel title="Histórico de movimentações" description="Registros concluídos são preservados; correções devem usar estorno rastreável.">
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
@@ -1003,7 +1107,7 @@ function Index() {
         {selectedInventory&&<div className="rounded-lg border bg-muted/30 p-3 text-sm"><p className="font-semibold">{selectedInventory.description||"Inventário"}</p><p className="mt-1 text-muted-foreground">{warehouses.find(w=>w.id===selectedInventory.warehouse_id)?.name??"Todos os armazéns"} · {selectedInventory.status==="concluido"?"Concluído":"Em andamento"}</p><p className="mt-1 text-xs text-muted-foreground">{selectedInventoryItems.length} contagem(ns) · {selectedInventoryItems.filter(item=>Number(item.difference)!==0).length} divergência(s)</p></div>}
       </div>
       {!inventorySessions.length?<Empty>Nenhum inventário registrado. Crie uma sessão acima para começar.</Empty>:null}
-      {selectedInventory&&selectedInventory.status==="em_andamento"&&canOperate&&<div className="mt-4 border-t pt-4"><h3 className="mb-3 text-sm font-semibold">Registrar contagem física</h3><AdjustmentForm countId={selectedInventory.id} warehouseId={selectedInventory.warehouse_id} orgId={orgId} materials={materials} locations={locations} saving={saving} onSave={runSave} onDone={refresh}/></div>}
+      {selectedInventory&&selectedInventory.status==="em_andamento"&&canOperate&&<div className="mt-4 border-t pt-4"><h3 className="mb-3 text-sm font-semibold">Registrar contagem física</h3><AdjustmentForm countId={selectedInventory.id} warehouseId={selectedInventory.warehouse_id} orgId={orgId} materials={materials} locations={storageLocationOptions} saving={saving} onSave={runSave} onDone={refresh}/></div>}
       {selectedInventory&&selectedInventory.status==="concluido"&&<p className="mt-4 rounded-lg bg-muted p-3 text-sm text-muted-foreground">Esta sessão foi concluída e não aceita novas contagens.</p>}
       {selectedInventory&&selectedInventory.status==="em_andamento"&&canOperate&&(canManage||selectedInventory.created_by===user?.id)&&<div className="mt-4 flex justify-end"><button type="button" disabled={saving} onClick={()=>void runSave(async()=>{const {data,error}=await db.from("inventory_counts").update({status:"concluido",completed_at:new Date().toISOString()}).eq("id",selectedInventory.id).eq("org_id",orgId).eq("status","em_andamento").select("id").single();if(error||!data)throw error??new Error("Não foi possível concluir o inventário.");},"Inventário concluído. O histórico foi preservado.")} className="rounded-lg border border-primary/40 px-4 py-2 text-sm font-semibold text-primary disabled:opacity-50"><Check className="mr-2 inline h-4 w-4"/>Concluir inventário</button></div>}
     </Panel>
