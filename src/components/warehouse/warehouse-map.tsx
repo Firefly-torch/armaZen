@@ -1408,6 +1408,8 @@ export function WarehouseMap({
                                         onClick={() => {
                                           const destinationId = legacyDestinationByBalance[selectedLocation.id + ":" + balance.material_id + ":" + String(balance.lot ?? "")];
                                           if (!destinationId) return;
+                                          const destination = selectedParentStorageDestinations.find((item) => item.id === destinationId);
+                                          if (!window.confirm(`Transferir ${formatQuantity(Number(balance.quantity))} ${material?.unit ?? ""} de ${selectedLocation.code} para ${destination?.code ?? "a posição selecionada"}? Esta movimentação removerá o saldo do endereço-pai e ficará registrada no histórico.`)) return;
                                           void onTransferLegacyBalance(balance.material_id, selectedLocation.id, destinationId, balance.lot ?? "", Number(balance.quantity));
                                         }}
                                       >
