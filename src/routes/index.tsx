@@ -564,7 +564,7 @@ function Index() {
   const rebuildBalancesFromLedger = () => {
     if (!balanceAuditPerformed || !balanceAuditRows.length) return;
     const confirmed = window.confirm(
-      "Reconstruir os saldos usando o histórico completo de movimentações? A operação atualiza somente os saldos divergentes. O histórico de movimentações e de inventários será preservado. Se o livro contiver saldos negativos ou saldos positivos sem movimentação, a reconstrução será cancelada."
+      "Reconstruir todos os saldos da organização usando o histórico completo de movimentações? O histórico de movimentações e de inventários será preservado. Se o livro contiver saldos negativos ou saldos positivos sem movimentação, a reconstrução será cancelada."
     );
     if (!confirmed) return;
     void runSave(async () => {
@@ -1051,7 +1051,7 @@ function Index() {
   };
 
   const materialsSection = <div className="space-y-5">
-    {canManage && <Panel title="Conferência dos saldos" description="Compara o saldo atual de cada material/endereço/lote com o saldo reconstruído pelo livro de entradas, saídas, transferências, ajustes e estornos.">
+    {canManage && <Panel title="Conferência dos saldos" description="Compara o saldo atual de cada material/endereço/lote com o saldo reconstruído pelo livro de entradas, saídas, transferências, ajustes e estornos. A reconstrução substitui o conjunto de saldos da organização pelo resultado validado desse histórico.">
       <div className="flex flex-wrap items-center gap-2">
         <button type="button" disabled={saving} onClick={inspectBalanceLedger} className="h-9 rounded-lg border px-3 text-sm font-medium">
           Verificar saldos
