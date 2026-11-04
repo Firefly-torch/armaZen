@@ -388,6 +388,10 @@ function Index() {
     const scopedBalances = balances.filter((balance) =>
       dashboardWarehouseId === "todos" || scopedLocationIds.has(balance.location_id)
     );
+    const availableLocationIds = new Set(scopedLocations
+      .filter((location) => location.active && location.status === "disponivel")
+      .map((location) => location.id));
+    const availableBalances = scopedBalances.filter((balance) => availableLocationIds.has(balance.location_id));
     const quantityByUnit = new Map<string, number>();
     scopedBalances.forEach((balance) => {
       const quantity = Number(balance.quantity || 0);
@@ -409,7 +413,7 @@ function Index() {
       (dashboardWarehouseId === "todos" || scopedLocationIds.has(item.location_id))
     );
     const countAccuracy = getInventoryAccuracy(scopedCounts);
-    const lowStockItems = getReplenishmentSuggestions(materials, scopedBalances);
+    const lowStockItems = getReplenishmentSuggestions(materials, availableBalances);
     const scopedTasks = tasks.filter((task) =>
       dashboardWarehouseId === "todos" ||
       (task.location_id != null && scopedLocationIds.has(task.location_id))
@@ -474,10 +478,13 @@ function Index() {
     };
   }, [materials, locations, levels, balances, movements, tasks, counts, period, dashboardWarehouseId]);
 
-  const allReplenishmentSuggestions = useMemo(
-    () => getReplenishmentSuggestions(materials, balances),
-    [materials, balances],
-  );
+  const allReplenishmentSuggestions = useMemo(() => {
+    const availableLocationIds = new Set(locations
+      .filter((location) => location.active && location.status === "disponivel")
+      .map((location) => location.id));
+    const availableBalances = balances.filter((balance) => availableLocationIds.has(balance.location_id));
+    return getReplenishmentSuggestions(materials, availableBalances);
+  }, [materials, balances, locations]);
 
   const selectedMapWarehouseId = mapWarehouseId && warehouses.some((warehouse) => warehouse.id === mapWarehouseId && warehouse.active)
     ? mapWarehouseId
@@ -589,7 +596,7 @@ function Index() {
       </div>
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {[
-          { label: "Materiais abaixo do mínimo", value: totals.lowStock, detail: "Avaliar reposição", Icon: AlertTriangle, tone: "border-amber-200 bg-amber-50/70 text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200" },
+          { label: "Materiais com saldo disponível abaixo do mínimo", value: totals.lowStock, detail: "Avaliar reposição", Icon: AlertTriangle, tone: "border-amber-200 bg-amber-50/70 text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200" },
           { label: "Divergências de inventário", value: totals.divergences, detail: "Linhas com diferença no período", Icon: ClipboardCheck, tone: "border-orange-200 bg-orange-50/70 text-orange-800 dark:border-orange-900 dark:bg-orange-950/30 dark:text-orange-200" },
           { label: "Tarefas atrasadas", value: totals.overdue, detail: "Atividades abertas com prazo vencido", Icon: CalendarClock, tone: "border-red-200 bg-red-50/70 text-red-800 dark:border-red-900 dark:bg-red-950/30 dark:text-red-200" },
           { label: "Acuracidade das contagens", value: totals.countAccuracy ? `${totals.countAccuracy.percentage.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%` : "—", detail: countAccuracyDetail, Icon: CheckCircle2, tone: "border-emerald-200 bg-emerald-50/70 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200" },
@@ -606,7 +613,7 @@ function Index() {
     </section>
 
     <div className="grid gap-4 xl:grid-cols-[1.45fr_1fr]">
-      <Panel title="Necessidade de reposição" description="Materiais cujo saldo registrado está abaixo do estoque mínimo cadastrado. A quantidade sugerida recompõe o mínimo; não gera pedido de compra.">
+      <Panel title="Necessidade de reposição" description="Materiais com saldo em endereços ativos e disponíveis abaixo do estoque mínimo. A quantidade sugerida recompõe o mínimo; não gera pedido de compra.">
         {totals.lowStockItems.length ? <>
           <Table headers={["Material","Saldo atual","Estoque mínimo","Para atingir o mínimo"]} rows={totals.lowStockItems.slice(0,6).map((item) => [
             <div><p className="font-semibold">{item.code}</p><p className="text-xs text-muted-foreground">{item.description}</p></div>,
@@ -880,7 +887,7 @@ function Index() {
   </div>;
 
   const materialsSection = <div className="space-y-5">
-    <Panel title="Planejamento de reposição" description="Lista de materiais abaixo do estoque mínimo. A quantidade calculada indica quanto falta para alcançar o mínimo cadastrado; não considera compras pendentes, reservas ou demandas ainda não registradas.">
+    <Panel title="Planejamento de reposição" description="Lista de materiais com saldo em endereços ativos e disponíveis abaixo do mínimo. Endereços bloqueados, reservados ou inativos não entram no saldo considerado. A quantidade não considera compras pendentes ou demandas ainda não registradas.">
       {allReplenishmentSuggestions.length ? <Table headers={["Código","Material","Saldo atual","Estoque mínimo","Necessidade estimada"]} rows={allReplenishmentSuggestions.map((item) => [
         item.code,
         item.description,
