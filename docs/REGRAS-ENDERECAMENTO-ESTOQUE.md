@@ -36,6 +36,9 @@ As regras reforçam o controle de materiais, a acuracidade dos registros, a iden
 ## Limitações técnicas conhecidas
 
 - Os indicadores e listas ainda dependem de consultas no frontend limitadas a 1.000 registros. Para operações maiores, devem ser substituídas por agregações no PostgreSQL e paginação.
+- A capacidade do endereço é uma referência para estimar ocupação no mapa. A aplicação ainda não bloqueia entradas ou transferências que ultrapassem o valor cadastrado; a unidade da capacidade também precisa ser compatível com a unidade do material para que o percentual seja calculado.
+- O cadastro do material pode exigir identificação do lote e essa exigência é validada nos fluxos de movimentação e contagem. A data de validade aparece quando existe no registro/exportação, mas o fluxo normal de entrada ainda não oferece campo para registrá-la; portanto, o sistema não deve ser usado como controle completo de vencimento até essa etapa ser implementada.
+- A devolução de obra é registrada como entrada vinculada a uma referência textual da obra. O sistema ainda não concilia automaticamente a devolução com uma saída anterior nem limita a quantidade devolvida ao que foi retirado.
 - O estoque mínimo é uma referência cadastrada manualmente; não há previsão estatística de consumo, lead time, pedidos de compra abertos ou reserva formal por obra.
 - A condição declarada numa devolução não substitui inspeção física, aceite ou processo formal de quarentena.
 - O endereço no mapa é uma representação hierárquica/esquemática; não substitui planta física validada, identificação visual no local ou procedimento de segurança.
