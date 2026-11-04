@@ -71,7 +71,10 @@ begin
     into v_count
     from public.inventory_counts ic
    where ic.org_id = _org
-     and ic.description = v_description
+     and (
+       ic.description = v_description
+       or ic.description like v_description || ' — revisão%'
+     )
      and ic.status = 'concluido'
    order by ic.completed_at desc nulls last, ic.created_at desc
    limit 1;
