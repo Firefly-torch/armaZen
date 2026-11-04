@@ -152,13 +152,17 @@ export function summarizeDescendantOccupancy(
   for (const position of positions) {
     const unitTotals = new Map<string, number>();
     let positionQuantity = 0;
+    let hasUnknownUnit = false;
 
     for (const balance of position.balances) {
       const quantity = quantityOf(balance.quantity);
       if (quantity <= 0) continue;
       positionQuantity += quantity;
       const unit = String(balance.unit ?? "").trim().toLocaleLowerCase("pt-BR");
-      if (!unit) continue;
+      if (!unit) {
+        hasUnknownUnit = true;
+        continue;
+      }
       unitTotals.set(unit, (unitTotals.get(unit) ?? 0) + quantity);
     }
 
@@ -166,7 +170,7 @@ export function summarizeDescendantOccupancy(
 
     const capacity = Number(position.capacity ?? 0);
     const capacityUnit = String(position.capacity_unit ?? "").trim().toLocaleLowerCase("pt-BR");
-    if (!Number.isFinite(capacity) || capacity <= 0 || !capacityUnit) continue;
+    if (!Number.isFinite(capacity) || capacity <= 0 || !capacityUnit || hasUnknownUnit) continue;
     if (unitTotals.size > 1) continue;
     if (unitTotals.size === 1 && !unitTotals.has(capacityUnit)) continue;
 
