@@ -612,7 +612,7 @@ function Index() {
             <div><p className="font-semibold">{item.code}</p><p className="text-xs text-muted-foreground">{item.description}</p></div>,
             `${dashboardNumber(item.currentQuantity)} ${item.unit}`,
             `${dashboardNumber(item.minimumQuantity)} ${item.unit}`,
-            <span className="font-semibold text-amber-700 dark:text-amber-300">+${dashboardNumber(item.suggestedQuantity)} ${item.unit}</span>,
+            <span className="font-semibold text-amber-700 dark:text-amber-300">+{dashboardNumber(item.suggestedQuantity)} {item.unit}</span>,
           ])}/>
           <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
             <p className="text-xs text-muted-foreground">{totals.lowStock} material(is) abaixo do mínimo no escopo selecionado.</p>
@@ -886,7 +886,7 @@ function Index() {
         item.description,
         `${dashboardNumber(item.currentQuantity)} ${item.unit}`,
         `${dashboardNumber(item.minimumQuantity)} ${item.unit}`,
-        <span className="font-semibold text-amber-700 dark:text-amber-300">+${dashboardNumber(item.suggestedQuantity)} ${item.unit}</span>,
+        <span className="font-semibold text-amber-700 dark:text-amber-300">+{dashboardNumber(item.suggestedQuantity)} {item.unit}</span>,
       ])}/> : <Empty>Nenhum material ativo está abaixo do estoque mínimo cadastrado.</Empty>}
     </Panel>
     <Panel title={matForm.id?"Editar material":"Cadastrar material"} description="Os saldos são lidos de inventory_balances; não são editados diretamente nesta tela.">
