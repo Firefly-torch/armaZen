@@ -30,7 +30,7 @@ O modelo está em [.env.example](.env.example). O arquivo .env local é ignorado
 
 ## Banco de dados e primeiro deploy
 
-A estrutura inicial está em [supabase/migrations/20261016000000_initial_schema.sql](supabase/migrations/20261016000000_initial_schema.sql). A migração incremental [supabase/migrations/20261021000000_demo_profiles_inventory_workflow.sql](supabase/migrations/20261021000000_demo_profiles_inventory_workflow.sql) prepara os perfis de demonstração e as sessões de inventário.
+A estrutura inicial está em [supabase/migrations/20261016000000_initial_schema.sql](supabase/migrations/20261016000000_initial_schema.sql). A migração incremental [supabase/migrations/20261021000000_demo_profiles_inventory_workflow.sql](supabase/migrations/20261021000000_demo_profiles_inventory_workflow.sql) prepara os perfis de demonstração e as sessões de inventário. A migração [supabase/migrations/20261104000000_storage_location_rules.sql](supabase/migrations/20261104000000_storage_location_rules.sql) aplica as regras de posições finais, impede novas alocações em endereços-pai e exige lote quando o material estiver configurado para rastreio.
 
 Antes de aplicar migrações, confirme o banco de destino, faça backup e confira o estado atual do esquema. A migração inicial não é idempotente; não a execute manualmente duas vezes nem aplique o conjunto inicial sobre um banco com objetos existentes sem comparar o plano.
 
@@ -54,8 +54,8 @@ O login demonstrativo não aceita e-mail ou senha arbitrários e não altera a s
 ## Módulos
 
 - **Dashboard:** indicadores do Supabase, filtro por armazém e período, acuracidade das linhas de inventário contadas, divergências, reposição necessária, tarefas atrasadas, devoluções identificadas, ocupação e tendência de movimentações.
-- **Armazém e endereçamento:** estrutura hierárquica configurável, mapa geral responsivo, pesquisa por material/endereço/código de barras, filtros de situação e validade, organização visual por Gestão e detalhes contextuais adaptados a telas pequenas.
-- **Materiais e estoque:** cadastro, saldos por endereço, planejamento estimado de reposição até o estoque mínimo (considerando apenas endereços ativos e disponíveis), alertas de validade de lotes e campos adicionais configuráveis.
+- **Armazém e endereçamento:** estrutura hierárquica configurável, mapa geral responsivo e distinção entre endereços estruturais e posições finais de armazenagem. Ocupação e capacidade estimada consideram somente posições finais; a capacidade ainda não bloqueia movimentações acima do limite.
+- **Materiais e estoque:** cadastro e saldos separados em disponível, reservado, bloqueado e a revisar, com total registrado para reconciliação. A reposição compara o estoque mínimo ao saldo disponível em posições finais ativas. Materiais configurados para rastreio exigem lote; a data de validade ainda não é cadastrada pelo fluxo normal de entrada.
 - **Movimentações:** entradas, saídas, transferências, ajustes, estornos e registro rastreável de devoluções de obra por função transacional do banco. A condição informada e a obra de origem ficam na referência/observações.
 - **Inventário:** sessões de contagem, quantidade esperada e contada, divergências e histórico. Uma sessão concluída não aceita novas contagens.
 - **Tarefas:** Kanban integrado ao armazém; mudar uma tarefa não altera o estoque.
@@ -63,6 +63,8 @@ O login demonstrativo não aceita e-mail ou senha arbitrários e não altera a s
 - **Usuários e configurações:** perfis de organização e atributos personalizados dos materiais, conforme permissões.
 
 O layout se adapta a computadores, tablets e celulares. Em telas pequenas, as tabelas gerais são apresentadas como cartões de leitura; os detalhes do mapa também usam cartões responsivos, e a página evita rolagem horizontal global. As tabelas usam paginação no conjunto de dados carregado; consultas gerais ainda têm um limite de carregamento por lista e não são destinadas a volumes ilimitados nesta versão acadêmica.
+
+As regras de classificação dos saldos, tratamento de registros legados e limitações de endereçamento estão detalhadas em [docs/REGRAS-ENDERECAMENTO-ESTOQUE.md](docs/REGRAS-ENDERECAMENTO-ESTOQUE.md).
 
 ## Comandos úteis
 
