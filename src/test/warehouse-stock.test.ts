@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { getStorageLocationIds, summarizeMaterialBalances } from "@/lib/warehouse-stock";
+import {
+  getStorageLocationIds,
+  summarizeDescendantOccupancy,
+  summarizeMaterialBalances,
+} from "@/lib/warehouse-stock";
 
 const levels = [
   { id: "storage", is_storage: true },
@@ -76,5 +80,64 @@ describe("summarizeMaterialBalances", () => {
     );
 
     expect(summaries.get("mat")?.totalQuantity).toBe(0);
+  });
+});
+
+
+describe("summarizeDescendantOccupancy", () => {
+  it("averages compatible descendant positions without mixing measurement units", () => {
+    const summary = summarizeDescendantOccupancy([
+      {
+        capacity: 100,
+        capacity_unit: "kg",
+        balances: [{ quantity: 25, unit: "kg" }],
+      },
+      {
+        capacity: 50,
+        capacity_unit: "L",
+        balances: [{ quantity: 25, unit: "L" }],
+      },
+      {
+        capacity: 100,
+        capacity_unit: "kg",
+        balances: [{ quantity: 20, unit: "L" }],
+      },
+      {
+        capacity: null,
+        capacity_unit: null,
+        balances: [{ quantity: 2, unit: "kg" }],
+      },
+    ]);
+
+    expect(summary).toEqual({
+      averagePercent: 38,
+      measurablePositions: 2,
+      totalPositions: 4,
+      occupiedPositions: 4,
+    });
+  });
+
+  it("counts empty positions as zero when their capacity is known", () => {
+    expect(summarizeDescendantOccupancy([
+      { capacity: 100, capacity_unit: "un", balances: [] },
+      { capacity: 100, capacity_unit: "un", balances: [{ quantity: 50, unit: "un" }] },
+    ])).toEqual({
+      averagePercent: 25,
+      measurablePositions: 2,
+      totalPositions: 2,
+      occupiedPositions: 1,
+    });
+  });
+
+  it("does not invent a percentage when no descendant has compatible capacity", () => {
+    expect(summarizeDescendantOccupancy([
+      { capacity: 0, capacity_unit: "kg", balances: [{ quantity: 10, unit: "kg" }] },
+      { capacity: 100, capacity_unit: "kg", balances: [{ quantity: 10, unit: "L" }] },
+    ])).toEqual({
+      averagePercent: null,
+      measurablePositions: 0,
+      totalPositions: 2,
+      occupiedPositions: 2,
+    });
   });
 });
