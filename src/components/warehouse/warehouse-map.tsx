@@ -374,7 +374,7 @@ export function WarehouseMap({
       .join(" · ");
   };
   const isLowStock = (locationId: string) =>
-    getLocationBalances(locationId).some((balance) => {
+    storageLocationIds.has(locationId) && getLocationBalances(locationId).some((balance) => {
       const material = materialsById.get(balance.material_id);
       return material && Number(totalByMaterial.get(material.id) ?? 0) < Number(material.min_stock ?? 0);
     });
