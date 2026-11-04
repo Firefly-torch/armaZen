@@ -379,14 +379,14 @@ function Index() {
     }
   }, [inventorySessions, selectedInventoryId]);
 
-  const activeWarehouseIds = new Set(warehouses.filter((warehouse) => warehouse.active).map((warehouse) => warehouse.id));
+  const activeWarehouseIds = useMemo(() => new Set(warehouses.filter((warehouse) => warehouse.active).map((warehouse) => warehouse.id)), [warehouses]);
   const storagePositionIds = useMemo(
     () => getStorageLocationIds(locations, levels, activeWarehouseIds),
-    [locations, levels, warehouses],
+    [locations, levels, activeWarehouseIds],
   );
   const stockSummaries = useMemo(
     () => summarizeMaterialBalances(materials, locations, levels, balances, activeWarehouseIds),
-    [materials, locations, levels, balances, warehouses],
+    [materials, locations, levels, balances, activeWarehouseIds],
   );
   const storageLocationOptions = locations.filter((location) => storagePositionIds.has(location.id));
   const destinationLocationOptions = storageLocationOptions.filter((location) => location.status !== "bloqueado");
@@ -477,7 +477,7 @@ function Index() {
       storageLocations: storageLocations.length,
       movementDays,
     };
-  }, [materials, locations, levels, balances, movements, tasks, counts, period, dashboardWarehouseId, warehouses]);
+  }, [materials, locations, levels, balances, movements, tasks, counts, period, dashboardWarehouseId, activeWarehouseIds]);
 
   const allReplenishmentSuggestions = useMemo(() => {
     const validStorageLocationIds = getStorageLocationIds(locations, levels, activeWarehouseIds);
@@ -486,7 +486,7 @@ function Index() {
       .map((location) => location.id));
     const availableBalances = balances.filter((balance) => availableLocationIds.has(balance.location_id));
     return getReplenishmentSuggestions(materials, availableBalances);
-  }, [materials, balances, locations, levels, warehouses]);
+  }, [materials, balances, locations, levels, activeWarehouseIds]);
 
   const selectedMapWarehouseId = mapWarehouseId && warehouses.some((warehouse) => warehouse.id === mapWarehouseId && warehouse.active)
     ? mapWarehouseId
