@@ -41,6 +41,17 @@ begin
   -- truth. Reject orphaned endpoints and cross-organization references.
   if exists (
     select 1
+      from public.inventory_balances b
+      join public.materials m on m.id = b.material_id
+      join public.locations l on l.id = b.location_id
+     where b.org_id = _org
+       and (m.org_id <> _org or l.org_id <> _org)
+  ) then
+    raise exception 'Há saldos vinculados a materiais ou endereços de outra organização. A reconstrução foi cancelada.';
+  end if;
+
+  if exists (
+    select 1
       from public.stock_movements sm
      where sm.org_id = _org
        and (
