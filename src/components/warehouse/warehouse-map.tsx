@@ -1290,15 +1290,17 @@ export function WarehouseMap({
               <p className="mt-1 text-sm font-semibold">{statusLabel(selectedLocation.status)}</p>
             </div>
             <div className="rounded-lg bg-muted/40 p-3">
-              <p className="text-xs text-muted-foreground">Saldo direto</p>
+              <p className="text-xs text-muted-foreground">{selectedParentOccupancy ? "Saldo direto · a revisar" : "Saldo direto"}</p>
               <p className="mt-1 text-sm font-semibold">{getQuantityLabel(selectedLocation.id)}</p>
             </div>
             <div className="rounded-lg bg-muted/40 p-3">
-              <p className="text-xs text-muted-foreground">Capacidade cadastrada</p>
+              <p className="text-xs text-muted-foreground">{selectedParentOccupancy ? "Posições descendentes" : "Capacidade cadastrada"}</p>
               <p className="mt-1 text-sm font-semibold">
-                {selectedLocation.capacity == null
-                  ? "Não configurada"
-                  : String(selectedLocation.capacity) + " " + String(selectedLocation.capacity_unit ?? "")}
+                {selectedParentOccupancy
+                  ? `${selectedParentOccupancy.totalPositions} posições · ${selectedParentOccupancy.measurablePositions} com capacidade compatível`
+                  : selectedLocation.capacity == null
+                    ? "Não configurada"
+                    : String(selectedLocation.capacity) + " " + String(selectedLocation.capacity_unit ?? "")}
               </p>
             </div>
             <div className="rounded-lg bg-muted/40 p-3">
