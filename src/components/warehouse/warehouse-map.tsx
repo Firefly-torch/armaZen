@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { getStorageLocationIds } from "@/lib/warehouse-stock";
 import {
   ArrowDown,
   ArrowLeft,
@@ -335,16 +336,23 @@ export function WarehouseMap({
     return result;
   }, [balances]);
 
+  const storageLocationIds = useMemo(
+    () => getStorageLocationIds(warehouseLocations, levels, new Set(selectedWarehouseId ? [selectedWarehouseId] : [])),
+    [warehouseLocations, levels, selectedWarehouseId],
+  );
+
   const totalByMaterial = useMemo(() => {
     const result = new Map<string, number>();
     for (const balance of balances) {
+      const location = locationsById.get(balance.location_id);
+      if (!location || !storageLocationIds.has(location.id) || location.status !== "disponivel") continue;
       result.set(
         balance.material_id,
         (result.get(balance.material_id) ?? 0) + Number(balance.quantity || 0),
       );
     }
     return result;
-  }, [balances]);
+  }, [balances, locationsById, storageLocationIds]);
 
   const selectedWarehouse = activeWarehouses.find((warehouse) => warehouse.id === selectedWarehouseId);
   const getLocationBalances = (locationId: string) =>
@@ -382,9 +390,7 @@ export function WarehouseMap({
       { expired: 0, near: 0 },
     );
 
-  const storageLocations = warehouseLocations.filter(
-    (location) => levelsById.get(location.level_id)?.is_storage,
-  );
+  const storageLocations = warehouseLocations.filter((location) => storageLocationIds.has(location.id));
   const occupiedCount = storageLocations.filter(
     (location) => getLocationBalances(location.id).length > 0,
   ).length;
@@ -451,7 +457,7 @@ export function WarehouseMap({
   const selectedQuantity =
     selectedUnitTotals.size === 1 ? ([...selectedUnitTotals.values()][0] ?? 0) : 0;
   const selectedOccupancy =
-    selectedLocation?.capacity && capacityCompatible
+    selectedLocation && storageLocationIds.has(selectedLocation.id) && selectedLocation.capacity && capacityCompatible
       ? Math.min(100, Math.round((selectedQuantity / Number(selectedLocation.capacity)) * 100))
       : null;
 
@@ -581,7 +587,9 @@ export function WarehouseMap({
     const isSelected = selectedLocationId === location.id;
     const dimmed = !directMatch(location) && normalizedQuery.length > 0;
     const nodeClass =
-      location.status === "bloqueado"
+      hasChildren
+        ? "border-slate-300 bg-slate-100/80 dark:border-slate-700 dark:bg-slate-900/60"
+        : location.status === "bloqueado"
         ? "border-red-400 bg-red-50 dark:border-red-800 dark:bg-red-950/35"
         : location.status === "reservado"
           ? "border-amber-400 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/35"
@@ -663,7 +671,7 @@ export function WarehouseMap({
                   {levelsById.get(location.level_id)?.name ?? "Nível"}
                 </span>
                 <span className="rounded-full border bg-background/80 px-2 py-0.5 text-[10px] font-medium">
-                  {directBalances.length ? "Com saldo" : hasChildren ? "Estrutura" : "Sem saldo"}
+                  {hasChildren ? "Estrutura · não armazena" : storageLocationIds.has(location.id) ? (directBalances.length ? "Com saldo" : "Posição vazia") : "Não é posição de armazenagem"}
                 </span>
               </span>
             </button>
@@ -746,7 +754,7 @@ export function WarehouseMap({
               <p className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">{hasChildren ? "Subendereços" : "Tarefas abertas"}</p>
               <p className="text-xs font-semibold tabular-nums">{hasChildren ? children.length : openTaskCount}</p>
             </div>
-            {location.capacity != null && (
+            {storageLocationIds.has(location.id) && location.capacity != null && (
               <div className="col-span-2 rounded-md border border-slate-200/80 bg-background/70 px-2 py-1.5 dark:border-slate-700">
                 <div className="flex items-center justify-between gap-2">
                   <p className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">Capacidade</p>
@@ -764,7 +772,7 @@ export function WarehouseMap({
           </div>
           {isLowStock(location.id) && (
             <p className="mt-2 text-[11px] font-semibold text-amber-700 dark:text-amber-300">
-              Estoque abaixo do mínimo
+              Material abaixo do mínimo disponível
             </p>
           )}
           {(expiryCounts.expired > 0 || expiryCounts.near > 0) && (
@@ -1106,6 +1114,12 @@ export function WarehouseMap({
             </div>
           )}
 
+          {!storageLocationIds.has(selectedLocation.id) && selectedBalances.length > 0 && (
+            <div role="alert" className="mt-3 rounded-lg border border-amber-300/60 bg-amber-50/70 p-3 text-xs leading-5 text-amber-900 dark:border-amber-900 dark:bg-amber-950/25 dark:text-amber-100">
+              Há saldo registrado diretamente neste endereço estrutural ou não armazenável. O registro foi preservado para conferência, mas não entra na disponibilidade, na reposição ou na taxa de ocupação. Transfira o material após confirmar fisicamente a posição correta.
+            </div>
+          )}
+
           <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
             <div className="rounded-lg bg-muted/40 p-3">
               <p className="text-xs text-muted-foreground">Situação</p>
@@ -1129,7 +1143,7 @@ export function WarehouseMap({
                 {selectedOccupancy === null ? "Não calculada" : selectedOccupancy + "%"}
               </p>
               <p className="text-[10px] text-muted-foreground">
-                {selectedOccupancy === null ? "Unidades incompatíveis ou capacidade ausente" : "Somente quando as unidades são compatíveis"}
+                {selectedOccupancy === null ? "Sem cálculo para estrutura, nível não armazenável ou capacidade/unidade incompatível" : "Cálculo baseado em uma unidade compatível"}
               </p>
             </div>
           </div>
@@ -1137,7 +1151,7 @@ export function WarehouseMap({
           <div className="mt-4 grid min-w-0 gap-4 xl:grid-cols-2">
             <div className="min-w-0">
               <h4 className="mb-2 flex items-center gap-2 text-sm font-semibold">
-                <Package className="h-4 w-4" /> Materiais armazenados
+                <Package className="h-4 w-4" /> Saldos registrados diretamente
               </h4>
               {selectedBalances.length ? (
                 <>
