@@ -15,6 +15,8 @@ const locations = [
   { id: "not-storage", warehouse_id: "wh", parent_id: null, level_id: "structure", active: true, status: "disponivel" },
   { id: "inactive", warehouse_id: "wh", parent_id: null, level_id: "storage", active: false, status: "disponivel" },
   { id: "other-warehouse", warehouse_id: "wh-2", parent_id: null, level_id: "storage", active: true, status: "disponivel" },
+  { id: "parent-with-inactive-child", warehouse_id: "wh", parent_id: null, level_id: "storage", active: true, status: "disponivel" },
+  { id: "inactive-child", warehouse_id: "wh", parent_id: "parent-with-inactive-child", level_id: "storage", active: false, status: "disponivel" },
 ];
 
 describe("getStorageLocationIds", () => {
@@ -26,6 +28,7 @@ describe("getStorageLocationIds", () => {
     expect(ids.has("not-storage")).toBe(false);
     expect(ids.has("inactive")).toBe(false);
     expect(ids.has("other-warehouse")).toBe(false);
+    expect(ids.has("parent-with-inactive-child")).toBe(false);
   });
 });
 
