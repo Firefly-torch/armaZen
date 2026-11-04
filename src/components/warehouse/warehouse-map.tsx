@@ -337,8 +337,8 @@ export function WarehouseMap({
   }, [balances]);
 
   const storageLocationIds = useMemo(
-    () => getStorageLocationIds(warehouseLocations, levels, new Set(selectedWarehouseId ? [selectedWarehouseId] : [])),
-    [warehouseLocations, levels, selectedWarehouseId],
+    () => getStorageLocationIds(locations.filter((location) => location.warehouse_id === selectedWarehouseId), levels, new Set(selectedWarehouseId ? [selectedWarehouseId] : [])),
+    [locations, levels, selectedWarehouseId],
   );
 
   const totalByMaterial = useMemo(() => {
