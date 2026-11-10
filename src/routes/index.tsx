@@ -203,10 +203,12 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
     <div className="flex min-h-screen items-center justify-center bg-background px-4 py-10">
       <div className="w-full max-w-5xl">
         <div className="mb-8 text-center">
-          <div className="mx-auto mb-4 w-full max-w-[260px] rounded-xl bg-white p-3 shadow-sm ring-1 ring-border">
+          <div className="mx-auto mb-4 w-full max-w-[320px] overflow-hidden rounded-xl bg-white p-2 shadow-sm ring-1 ring-border">
             <img
-              src="/armazen-logo.png"
+              src="/armazen-logo.png?v=3"
               alt="armaZen — Sistema de Gestão de Armazém"
+              width={275}
+              height={164}
               className="block h-auto w-full"
             />
           </div>
@@ -521,7 +523,7 @@ function Index() {
       <div className="flex min-h-screen items-center justify-center bg-background">
         <div className="text-center">
           <img
-            src="/armazen-icon.png"
+            src="/armazen-icon.png?v=3"
             alt=""
             className="mx-auto mb-4 h-16 w-16 rounded-2xl bg-white p-1 object-contain shadow-sm"
           />
@@ -1651,7 +1653,7 @@ function Index() {
   const active = visibleNav.find(n=>n.id===section);
   return <div className="min-h-screen w-full max-w-full overflow-x-clip bg-background text-foreground md:flex">
     <aside className="flex min-w-0 w-full max-w-full flex-col border-b bg-[var(--sidebar)] text-[var(--sidebar-foreground)] md:fixed md:inset-y-0 md:w-64 md:border-b-0 md:border-r md:border-[var(--sidebar-border)]">
-      <div className="flex items-center gap-3 border-b border-[var(--sidebar-border)] px-5 py-5"><div className="flex h-10 w-10 items-center justify-center rounded-lg bg-white p-1"><img src="/armazen-icon.png" alt="" className="h-full w-full object-contain"/></div><div><p className="text-lg font-bold">armaZen</p><p className="text-xs text-[var(--sidebar-muted)]">Sistema de gestão de armazém</p></div></div>
+      <div className="flex flex-col items-center gap-2 border-b border-[var(--sidebar-border)] px-4 py-4"><img src="/armazen-logo.png?v=3" alt="armaZen — Sistema de Gestão de Armazém" width={275} height={164} className="block h-auto w-full max-w-[208px] rounded-md bg-white p-2"/><p className="text-center text-xs text-[var(--sidebar-muted)]">Sistema de gestão de armazém</p></div>
       <nav aria-label="Navegação principal" className="grid grid-cols-2 gap-1 p-3 sm:grid-cols-3 md:flex md:flex-1 md:flex-col">{visibleNav.map(item=>{const Icon=item.icon;return <button key={item.id} onClick={()=>{setSection(item.id);setSearch("");setMessage("");setDataError("");}} className={`flex min-h-[3.25rem] min-w-0 items-start gap-2 rounded-lg px-3 py-3 text-left text-sm transition-colors ${section===item.id?"bg-[var(--sidebar-accent)] font-semibold text-[var(--sidebar-accent-foreground)]":"text-[var(--sidebar-foreground)]/75 hover:bg-[var(--sidebar-accent)]"}`}><Icon className="mt-0.5 h-4 w-4 shrink-0"/><span className="min-w-0 whitespace-normal break-words leading-snug [overflow-wrap:anywhere]">{item.label}</span></button>;})}</nav>
       <div className="hidden border-t border-[var(--sidebar-border)] p-4 text-xs text-[var(--sidebar-muted)] md:block">Protótipo acadêmico · armaZen</div>
     </aside>
