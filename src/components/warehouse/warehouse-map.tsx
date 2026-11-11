@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   getStorageLocationIds,
   summarizeDescendantOccupancy,
+  summarizeLocationCapacity,
 } from "@/lib/warehouse-stock";
 import {
   buildWarehouseHierarchyFilterSteps,
@@ -55,6 +56,8 @@ type LocationItem = {
   active: boolean;
   capacity: number | null;
   capacity_unit: string | null;
+  allow_mixed_materials?: boolean;
+  allowed_categories?: string[] | null;
   pos_x: number | null;
   pos_y: number | null;
   notes?: string | null;
@@ -465,6 +468,15 @@ export function WarehouseMap({
       },
       { expired: 0, near: 0 },
     );
+  const getLocationCapacitySummary = (location: LocationItem) =>
+    summarizeLocationCapacity(
+      location.capacity,
+      location.capacity_unit,
+      getLocationBalances(location.id).map((balance) => ({
+        quantity: balance.quantity,
+        unit: materialsById.get(balance.material_id)?.unit ?? null,
+      })),
+    );
 
   const storageLocations = warehouseLocations.filter((location) => storageLocationIds.has(location.id));
   const occupiedCount = storageLocations.filter(
@@ -475,6 +487,9 @@ export function WarehouseMap({
   const lowStockCount = storageLocations.filter((location) => isLowStock(location.id)).length;
   const expiredLocationCount = storageLocations.filter((location) => getExpiryCounts(location.id).expired > 0).length;
   const nearExpiryLocationCount = storageLocations.filter((location) => getExpiryCounts(location.id).near > 0).length;
+  const unknownCapacityCount = storageLocations.filter((location) => getLocationCapacitySummary(location).status === "unknown").length;
+  const incompatibleCapacityCount = storageLocations.filter((location) => getLocationCapacitySummary(location).status === "incompatible").length;
+  const overCapacityCount = storageLocations.filter((location) => getLocationCapacitySummary(location).overCapacity).length;
 
   const normalizedQuery = query.trim().toLocaleLowerCase("pt-BR");
   const directMatch = (location: LocationItem) => {
@@ -553,18 +568,11 @@ export function WarehouseMap({
       .sort((a, b) => a.code.localeCompare(b.code, "pt-BR", { numeric: true }));
   }, [selectedLocation, selectedParentOccupancy, warehouseLocations, storageLocationIds, locationsById]);
 
-  const selectedUnitTotals = selectedLocation ? getUnitTotals(selectedLocation.id) : new Map<string, number>();
-  const selectedCapacityUnit = String(selectedLocation?.capacity_unit ?? "").trim().toLowerCase();
-  const capacityCompatible = Boolean(
-    selectedLocation?.capacity &&
-      (selectedUnitTotals.size === 0 ||
-        (selectedUnitTotals.size === 1 &&
-          [...selectedUnitTotals.keys()][0]?.toLowerCase() === selectedCapacityUnit)),
-  );
-  const selectedQuantity =
-    selectedUnitTotals.size === 1 ? ([...selectedUnitTotals.values()][0] ?? 0) : 0;
-  const selectedOccupancy = selectedLocation && storageLocationIds.has(selectedLocation.id) && selectedLocation.capacity && capacityCompatible
-    ? Math.min(100, Math.round((selectedQuantity / Number(selectedLocation.capacity)) * 100))
+  const selectedCapacitySummary = selectedLocation && storageLocationIds.has(selectedLocation.id)
+    ? getLocationCapacitySummary(selectedLocation)
+    : null;
+  const selectedOccupancy = selectedCapacitySummary?.status === "measurable"
+    ? Math.round(selectedCapacitySummary.percentage ?? 0)
     : selectedParentOccupancy?.averagePercent ?? null;
 
   const selectedPath = useMemo(() => {
@@ -764,18 +772,12 @@ export function WarehouseMap({
     const expiryCounts = getExpiryCounts(location.id);
     const materialCount = new Set(directBalances.map((balance) => balance.material_id)).size;
     const openTaskCount = tasks.filter((task) => task.location_id === location.id && task.status !== "concluida").length;
-    const unitTotals = getUnitTotals(location.id);
     const descendantOccupancy = hasChildren
       ? descendantOccupancyByLocation.get(location.id) ?? null
       : null;
-    const capacityUnit = String(location.capacity_unit ?? "").trim().toLowerCase();
-    const capacityCompatible = Boolean(
-      location.capacity &&
-      (unitTotals.size === 0 || (unitTotals.size === 1 && [...unitTotals.keys()][0]?.toLowerCase() === capacityUnit)),
-    );
-    const capacityQuantity = unitTotals.size === 1 ? ([...unitTotals.values()][0] ?? 0) : 0;
-    const capacityPercent = location.capacity && capacityCompatible
-      ? Math.min(100, Math.round((capacityQuantity / Number(location.capacity)) * 100))
+    const capacitySummary = getLocationCapacitySummary(location);
+    const capacityPercent = capacitySummary.status === "measurable" && capacitySummary.percentage !== null
+      ? Math.round(capacitySummary.percentage)
       : null;
     const isSelected = selectedLocationId === location.id;
     const dimmed = !directMatch(location) && normalizedQuery.length > 0;
@@ -863,8 +865,26 @@ export function WarehouseMap({
                   {levelsById.get(location.level_id)?.name ?? "Nível"}
                 </span>
                 <span className="rounded-full border bg-background/80 px-2 py-0.5 text-[10px] font-medium">
-                  {hasChildren ? "Estrutura · não armazena" : storageLocationIds.has(location.id) ? (directBalances.length ? "Com saldo" : "Posição vazia") : "Não é posição de armazenagem"}
+                  {hasChildren
+                    ? "Estrutura · não armazena"
+                    : storageLocationIds.has(location.id)
+                      ? directBalances.length
+                        ? "Com saldo"
+                        : capacitySummary.status === "unknown"
+                          ? "Sem saldo · capacidade indeterminada"
+                          : "Sem saldo"
+                      : "Não é posição de armazenagem"}
                 </span>
+                {storageLocationIds.has(location.id) && (
+                  <span className="rounded-full border bg-background/80 px-2 py-0.5 text-[10px] font-medium">
+                    {location.allow_mixed_materials === false ? "Material único" : "Materiais mistos"}
+                  </span>
+                )}
+                {storageLocationIds.has(location.id) && (location.allowed_categories?.length ?? 0) > 0 && (
+                  <span className="rounded-full border bg-background/80 px-2 py-0.5 text-[10px] font-medium">
+                    Categorias: {location.allowed_categories?.join(", ")}
+                  </span>
+                )}
               </span>
             </button>
             {editMode && canManage && (
@@ -961,11 +981,14 @@ export function WarehouseMap({
                 </div>
                 <p className="text-[10px] text-muted-foreground">
                   {descendantOccupancy.occupiedPositions} de {descendantOccupancy.totalPositions} posições com saldo
-                  {" · "}{descendantOccupancy.measurablePositions} com capacidade compatível
+                  {" · "}{descendantOccupancy.measurablePositions} mensuráveis
+                  {" · "}{descendantOccupancy.unknownCapacityPositions} sem capacidade cadastrada
+                  {" · "}{descendantOccupancy.incompatiblePositions} com unidade incompatível
+                  {" · "}{descendantOccupancy.overCapacityPositions} acima do limite
                 </p>
                 {descendantOccupancy.averagePercent !== null && (
                   <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted">
-                    <div className="h-full rounded-full bg-primary" style={{ width: descendantOccupancy.averagePercent + "%" }} />
+                    <div className={"h-full rounded-full " + (descendantOccupancy.overCapacityPositions ? "bg-red-600" : "bg-primary")} style={{ width: Math.min(100, descendantOccupancy.averagePercent) + "%" }} />
                   </div>
                 )}
                 {descendantOccupancy.totalPositions === 0 && (
@@ -973,19 +996,36 @@ export function WarehouseMap({
                 )}
               </div>
             )}
-            {storageLocationIds.has(location.id) && location.capacity != null && (
+            {storageLocationIds.has(location.id) && (
               <div className="col-span-2 rounded-md border border-slate-200/80 bg-background/70 px-2 py-1.5 dark:border-slate-700">
                 <div className="flex items-center justify-between gap-2">
-                  <p className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">Capacidade</p>
-                  <p className="text-xs font-semibold tabular-nums">{capacityPercent === null ? "Não calculada" : capacityPercent + "%"}</p>
+                  <p className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">Capacidade e ocupação</p>
+                  <p className={"text-xs font-semibold tabular-nums " + (capacitySummary.overCapacity ? "text-red-700 dark:text-red-300" : "")}>
+                    {capacitySummary.status === "unknown"
+                      ? "Indeterminada"
+                      : capacitySummary.status === "incompatible"
+                        ? "Não calculada"
+                        : capacityPercent + "%" + (capacitySummary.overCapacity ? " · excedida" : "")}
+                  </p>
                 </div>
-                <p className="text-[10px] text-muted-foreground">
-                  {unitTotals.size > 1
-                    ? "Unidades incompatíveis para calcular o volume"
-                    : formatQuantity(capacityQuantity) + " " + (unitTotals.size === 1 ? [...unitTotals.keys()][0] : location.capacity_unit ?? "")}
-                  {" / "}{formatQuantity(Number(location.capacity))} {location.capacity_unit ?? ""}
-                </p>
-                {capacityPercent !== null && <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-primary" style={{ width: capacityPercent + "%" }} /></div>}
+                {capacitySummary.status === "measurable" ? (
+                  <>
+                    <p className="text-[10px] text-muted-foreground">
+                      {formatQuantity(capacitySummary.occupiedQuantity ?? 0)} / {formatQuantity(capacitySummary.capacity ?? 0)} {location.capacity_unit ?? ""}
+                      {" · "}{formatQuantity(capacitySummary.remaining ?? 0)} {location.capacity_unit ?? ""} restantes
+                    </p>
+                    <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted">
+                      <div
+                        className={"h-full rounded-full " + (capacitySummary.overCapacity ? "bg-red-600" : "bg-primary")}
+                        style={{ width: Math.min(100, capacityPercent ?? 0) + "%" }}
+                      />
+                    </div>
+                  </>
+                ) : (
+                  <p className="text-[10px] text-muted-foreground">
+                    {capacitySummary.reason} Não considerar como espaço livre.
+                  </p>
+                )}
               </div>
             )}
           </div>
@@ -1324,6 +1364,9 @@ export function WarehouseMap({
           { label: "Com estoque abaixo do mínimo", value: String(lowStockCount), detail: "Localizações com materiais em alerta" },
           { label: "Com lotes vencidos", value: String(expiredLocationCount), detail: "Endereços com pelo menos um lote vencido" },
           { label: "Com validade próxima", value: String(nearExpiryLocationCount), detail: "Endereços com lote vencendo em até 30 dias" },
+          { label: "Capacidade indeterminada", value: String(unknownCapacityCount), detail: "Posições sem limite mensurável cadastrado" },
+          { label: "Unidade incompatível", value: String(incompatibleCapacityCount), detail: "Posições sem cálculo seguro de ocupação" },
+          { label: "Acima da capacidade", value: String(overCapacityCount), detail: "Posições cujo saldo supera o limite cadastrado" },
         ].map((item) => (
           <div key={item.label} className="rounded-lg border bg-muted/20 p-3">
             <p className="text-xs text-muted-foreground">{item.label}</p>
@@ -1435,10 +1478,12 @@ export function WarehouseMap({
               <p className="text-xs text-muted-foreground">{selectedParentOccupancy ? "Posições descendentes" : "Capacidade cadastrada"}</p>
               <p className="mt-1 text-sm font-semibold">
                 {selectedParentOccupancy
-                  ? `${selectedParentOccupancy.totalPositions} posições · ${selectedParentOccupancy.measurablePositions} com capacidade compatível`
-                  : selectedLocation.capacity == null
-                    ? "Não configurada"
-                    : String(selectedLocation.capacity) + " " + String(selectedLocation.capacity_unit ?? "")}
+                  ? `${selectedParentOccupancy.totalPositions} posições · ${selectedParentOccupancy.measurablePositions} mensuráveis · ${selectedParentOccupancy.unknownCapacityPositions} sem capacidade`
+                  : selectedCapacitySummary?.status === "unknown"
+                    ? "Não configurada · indeterminada"
+                    : selectedLocation.capacity == null
+                      ? "Não configurada · indeterminada"
+                      : String(selectedLocation.capacity) + " " + String(selectedLocation.capacity_unit ?? "")}
               </p>
             </div>
             <div className="rounded-lg bg-muted/40 p-3">
@@ -1448,10 +1493,16 @@ export function WarehouseMap({
               </p>
               <p className="text-[10px] text-muted-foreground">
                 {selectedParentOccupancy
-                  ? `${selectedParentOccupancy.measurablePositions} de ${selectedParentOccupancy.totalPositions} posições com capacidade compatível; média por posição, sem somar unidades diferentes.`
-                  : selectedOccupancy === null
-                    ? "Sem capacidade compatível ou endereço não armazenável."
-                    : "Cálculo baseado na capacidade da posição e em uma unidade compatível."}
+                  ? `${selectedParentOccupancy.measurablePositions} mensuráveis; ${selectedParentOccupancy.unknownCapacityPositions} sem capacidade; ${selectedParentOccupancy.incompatiblePositions} com unidade incompatível; ${selectedParentOccupancy.overCapacityPositions} acima do limite. A média é por posição e não soma unidades diferentes.`
+                  : selectedCapacitySummary?.status === "unknown"
+                    ? "Capacidade desconhecida. Não significa que o endereço esteja vazio ou tenha espaço livre."
+                    : selectedCapacitySummary?.status === "incompatible"
+                      ? selectedCapacitySummary.reason
+                      : selectedCapacitySummary?.overCapacity
+                        ? "O saldo atual excede a capacidade configurada."
+                        : selectedOccupancy === null
+                          ? "Sem capacidade compatível ou endereço não armazenável."
+                          : `${formatQuantity(selectedCapacitySummary?.remaining ?? 0)} ${selectedLocation.capacity_unit ?? ""} restantes, sem conversão automática de unidades.`}
               </p>
             </div>
           </div>

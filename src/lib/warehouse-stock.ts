@@ -130,11 +130,210 @@ export type DescendantStoragePosition = {
   }>;
 };
 
+export type LocationCapacitySummary = {
+  status: "unknown" | "incompatible" | "measurable";
+  occupiedQuantity: number | null;
+  capacity: number | null;
+  capacityUnit: string | null;
+  percentage: number | null;
+  remaining: number | null;
+  overCapacity: boolean;
+  reason: string | null;
+};
+
+export function summarizeLocationCapacity(
+  capacityValue: number | string | null,
+  capacityUnitValue: string | null,
+  balances: Array<{ quantity: number | string | null; unit: string | null }>,
+): LocationCapacitySummary {
+  const capacity = Number(capacityValue ?? 0);
+  const capacityUnit = String(capacityUnitValue ?? "").trim().toLocaleLowerCase("pt-BR");
+  if (!Number.isFinite(capacity) || capacity <= 0 || !capacityUnit) {
+    return {
+      status: "unknown",
+      occupiedQuantity: null,
+      capacity: Number.isFinite(capacity) && capacity > 0 ? capacity : null,
+      capacityUnit: capacityUnit || null,
+      percentage: null,
+      remaining: null,
+      overCapacity: false,
+      reason: "Capacidade não cadastrada ou sem unidade.",
+    };
+  }
+
+  const unitTotals = new Map<string, number>();
+  let hasUnknownUnit = false;
+  for (const balance of balances) {
+    const quantity = quantityOf(balance.quantity);
+    if (quantity <= 0) continue;
+    const unit = String(balance.unit ?? "").trim().toLocaleLowerCase("pt-BR");
+    if (!unit) {
+      hasUnknownUnit = true;
+      continue;
+    }
+    unitTotals.set(unit, (unitTotals.get(unit) ?? 0) + quantity);
+  }
+
+  if (hasUnknownUnit || unitTotals.size > 1 || (unitTotals.size === 1 && !unitTotals.has(capacityUnit))) {
+    return {
+      status: "incompatible",
+      occupiedQuantity: null,
+      capacity,
+      capacityUnit,
+      percentage: null,
+      remaining: null,
+      overCapacity: false,
+      reason: "Há unidades de medida incompatíveis com a capacidade cadastrada.",
+    };
+  }
+
+  const occupiedQuantity = unitTotals.get(capacityUnit) ?? 0;
+  const percentage = (occupiedQuantity / capacity) * 100;
+  return {
+    status: "measurable",
+    occupiedQuantity,
+    capacity,
+    capacityUnit,
+    percentage,
+    remaining: Math.max(0, capacity - occupiedQuantity),
+    overCapacity: occupiedQuantity > capacity,
+    reason: null,
+  };
+}
+
+export type AllocationLocation = {
+  id: string;
+  active: boolean;
+  status: string;
+  capacity: number | string | null;
+  capacity_unit: string | null;
+  allow_mixed_materials?: boolean;
+  allowed_categories?: string[] | null;
+};
+
+export type AllocationMaterial = {
+  id: string;
+  category: string;
+  unit: string;
+};
+
+export type AllocationBalance = {
+  material_id: string;
+  location_id: string;
+  quantity: number | string | null;
+};
+
+export type LocationAllocationAssessment = {
+  allowed: boolean;
+  status: "blocked" | "unknown_capacity" | "within_capacity";
+  message: string;
+  currentQuantity: number | null;
+  projectedQuantity: number | null;
+  remainingCapacity: number | null;
+};
+
+export function assessLocationAllocation(
+  location: AllocationLocation,
+  material: AllocationMaterial,
+  requestedQuantity: number,
+  balances: AllocationBalance[],
+  materials: AllocationMaterial[],
+): LocationAllocationAssessment {
+  const blocked = (message: string): LocationAllocationAssessment => ({
+    allowed: false,
+    status: "blocked",
+    message,
+    currentQuantity: null,
+    projectedQuantity: null,
+    remainingCapacity: null,
+  });
+
+  if (!location.active) return blocked("O endereço está inativo.");
+  if (location.status === "bloqueado") return blocked("O endereço está bloqueado para novas alocações.");
+  if (!Number.isFinite(requestedQuantity) || requestedQuantity <= 0) {
+    return blocked("Informe uma quantidade maior que zero.");
+  }
+
+  const allowedCategories = (location.allowed_categories ?? [])
+    .map((category) => String(category).trim().toLocaleLowerCase("pt-BR"))
+    .filter(Boolean);
+  if (
+    allowedCategories.length > 0 &&
+    !allowedCategories.includes(String(material.category).trim().toLocaleLowerCase("pt-BR"))
+  ) {
+    return blocked(`A categoria "${material.category}" não é permitida neste endereço.`);
+  }
+
+  const currentBalances = balances.filter(
+    (balance) => balance.location_id === location.id && Number(balance.quantity ?? 0) > 0,
+  );
+  if (
+    location.allow_mixed_materials === false &&
+    currentBalances.some((balance) => balance.material_id !== material.id)
+  ) {
+    return blocked("O endereço aceita apenas um material e já contém outro material.");
+  }
+
+  const capacity = Number(location.capacity ?? 0);
+  const capacityUnit = String(location.capacity_unit ?? "").trim().toLocaleLowerCase("pt-BR");
+  if (!Number.isFinite(capacity) || capacity <= 0) {
+    return {
+      allowed: true,
+      status: "unknown_capacity",
+      message: "Capacidade não cadastrada: a ocupação é indeterminada e não deve ser interpretada como espaço livre.",
+      currentQuantity: null,
+      projectedQuantity: null,
+      remainingCapacity: null,
+    };
+  }
+  if (!capacityUnit) {
+    return blocked("A capacidade cadastrada não possui unidade. Corrija o endereço antes de alocar estoque.");
+  }
+  if (String(material.unit).trim().toLocaleLowerCase("pt-BR") !== capacityUnit) {
+    return blocked(`Unidade incompatível: capacidade em "${location.capacity_unit}" e material em "${material.unit}". Não há conversão automática.`);
+  }
+
+  const materialsById = new Map(materials.map((item) => [item.id, item] as const));
+  let currentQuantity = 0;
+  for (const balance of currentBalances) {
+    const existingMaterial = materialsById.get(balance.material_id);
+    const existingUnit = String(existingMaterial?.unit ?? "").trim().toLocaleLowerCase("pt-BR");
+    if (!existingUnit || existingUnit !== capacityUnit) {
+      return blocked("O endereço já contém saldo com unidade incompatível. Confira os registros antes de receber mais materiais.");
+    }
+    currentQuantity += quantityOf(balance.quantity);
+  }
+
+  const projectedQuantity = currentQuantity + requestedQuantity;
+  if (projectedQuantity > capacity) {
+    return {
+      allowed: false,
+      status: "blocked",
+      message: `Capacidade excedida: ocupação projetada de ${projectedQuantity} ${location.capacity_unit}, acima do limite de ${capacity} ${location.capacity_unit}.`,
+      currentQuantity,
+      projectedQuantity,
+      remainingCapacity: Math.max(0, capacity - currentQuantity),
+    };
+  }
+
+  return {
+    allowed: true,
+    status: "within_capacity",
+    message: `Após a movimentação: ${projectedQuantity} de ${capacity} ${location.capacity_unit} (${Math.max(0, capacity - projectedQuantity)} ${location.capacity_unit} restantes).`,
+    currentQuantity,
+    projectedQuantity,
+    remainingCapacity: Math.max(0, capacity - projectedQuantity),
+  };
+}
+
 export type DescendantOccupancySummary = {
   averagePercent: number | null;
   measurablePositions: number;
   totalPositions: number;
   occupiedPositions: number;
+  overCapacityPositions: number;
+  unknownCapacityPositions: number;
+  incompatiblePositions: number;
 };
 
 /**
@@ -148,34 +347,27 @@ export function summarizeDescendantOccupancy(
 ): DescendantOccupancySummary {
   const percentages: number[] = [];
   let occupiedPositions = 0;
+  let overCapacityPositions = 0;
+  let unknownCapacityPositions = 0;
+  let incompatiblePositions = 0;
 
   for (const position of positions) {
-    const unitTotals = new Map<string, number>();
-    let positionQuantity = 0;
-    let hasUnknownUnit = false;
+    const positionHasBalance = position.balances.some((balance) => quantityOf(balance.quantity) > 0);
+    if (positionHasBalance) occupiedPositions += 1;
 
-    for (const balance of position.balances) {
-      const quantity = quantityOf(balance.quantity);
-      if (quantity <= 0) continue;
-      positionQuantity += quantity;
-      const unit = String(balance.unit ?? "").trim().toLocaleLowerCase("pt-BR");
-      if (!unit) {
-        hasUnknownUnit = true;
-        continue;
-      }
-      unitTotals.set(unit, (unitTotals.get(unit) ?? 0) + quantity);
+    const summary = summarizeLocationCapacity(
+      position.capacity,
+      position.capacity_unit,
+      position.balances,
+    );
+    if (summary.status === "unknown") {
+      unknownCapacityPositions += 1;
+    } else if (summary.status === "incompatible") {
+      incompatiblePositions += 1;
+    } else if (summary.percentage !== null) {
+      percentages.push(summary.percentage);
+      if (summary.overCapacity) overCapacityPositions += 1;
     }
-
-    if (positionQuantity > 0) occupiedPositions += 1;
-
-    const capacity = Number(position.capacity ?? 0);
-    const capacityUnit = String(position.capacity_unit ?? "").trim().toLocaleLowerCase("pt-BR");
-    if (!Number.isFinite(capacity) || capacity <= 0 || !capacityUnit || hasUnknownUnit) continue;
-    if (unitTotals.size > 1) continue;
-    if (unitTotals.size === 1 && !unitTotals.has(capacityUnit)) continue;
-
-    const compatibleQuantity = unitTotals.size === 0 ? 0 : unitTotals.get(capacityUnit) ?? 0;
-    percentages.push(Math.min(100, (compatibleQuantity / capacity) * 100));
   }
 
   return {
@@ -185,5 +377,8 @@ export function summarizeDescendantOccupancy(
     measurablePositions: percentages.length,
     totalPositions: positions.length,
     occupiedPositions,
+    overCapacityPositions,
+    unknownCapacityPositions,
+    incompatiblePositions,
   };
 }
