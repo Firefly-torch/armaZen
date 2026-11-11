@@ -202,6 +202,7 @@ export function WarehouseMap({
 }: WarehouseMapProps) {
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("todos");
+  const [levelFilter, setLevelFilter] = useState("todos");
   const [zoom, setZoom] = useState(85);
   const [editMode, setEditMode] = useState(false);
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
@@ -475,7 +476,8 @@ export function WarehouseMap({
       (statusFilter === "estoque_baixo" && isLowStock(location.id)) ||
       (statusFilter === "validade_vencida" && getExpiryCounts(location.id).expired > 0) ||
       (statusFilter === "validade_proxima" && getExpiryCounts(location.id).near > 0);
-    return searchMatch && statusMatch;
+    const levelMatch = levelFilter === "todos" || location.level_id === levelFilter;
+    return searchMatch && statusMatch && levelMatch;
   };
 
   const branchMatchCache = new Map<string, boolean>();
@@ -1123,6 +1125,19 @@ export function WarehouseMap({
               <option value="validade_proxima">Validade em até 30 dias</option>
             </select>
           </span>
+        </label>
+        <label className="grid min-w-48 flex-1 gap-1 text-xs">
+          <span className="font-medium text-muted-foreground">Filtrar por nível</span>
+          <select
+            className="h-9 w-full rounded-lg border bg-background px-3"
+            value={levelFilter}
+            onChange={(event) => setLevelFilter(event.target.value)}
+          >
+            <option value="todos">Todos os níveis</option>
+            {[...levels].sort((a, b) => a.name.localeCompare(b.name, "pt-BR")).map((level) => (
+              <option key={level.id} value={level.id}>{level.name}</option>
+            ))}
+          </select>
         </label>
         <div className="flex flex-wrap gap-1.5">
           <button
