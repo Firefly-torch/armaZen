@@ -32,11 +32,15 @@ As contagens físicas, os estornos e a reconstrução do livro de movimentaçõe
 
 As sugestões de endereçamento são apresentadas nas entradas e transferências como apoio à decisão do operador. O sistema considera somente posições finais de armazenagem ativas, em armazéns ativos, e reaplica as regras de capacidade, unidade, categoria e materiais mistos. Endereços bloqueados, estruturais, inativos ou incompatíveis são excluídos. Endereços reservados não são sugeridos na rotina comum de entrada e transferência.
 
-A classificação é explicável e determinística:
-- primeiro favorece posições que já armazenam o mesmo material, para facilitar a consolidação;
-- em transferências, favorece posições no mesmo grupo estrutural da origem, sem assumir que isso represente menor distância física;
-- entre posições mensuráveis, prioriza o melhor encaixe, isto é, o menor espaço restante após a alocação;
-- posições sem capacidade cadastrada aparecem depois das opções mensuráveis, com aviso de capacidade indeterminada e necessidade de conferência física.
+A classificação é explicável e determinística. A ordenação segue esta prioridade:
+1. Posições disponíveis antes de posições reservadas (quando estas forem explicitamente permitidas).
+2. Posições com capacidade mensurável antes das que têm capacidade indeterminada.
+3. Posições que já armazenam o mesmo material, para facilitar a consolidação.
+4. Em transferências, posições no mesmo grupo estrutural da origem, sem assumir que isso represente menor distância física.
+5. Entre opções com os mesmos critérios anteriores, melhor encaixe: menor espaço restante após a alocação.
+6. Desempate pelo caminho hierárquico e código do endereço, em ordem numérica e alfabética estável.
+
+Posições sem capacidade cadastrada aparecem depois das opções mensuráveis, com aviso de capacidade indeterminada e necessidade de conferência física.
 
 As sugestões mostram o motivo da classificação e não executam movimentações, reservas ou alterações de saldo. A escolha do destino e a confirmação da movimentação continuam sendo ações do operador. A lista mostra até cinco opções compatíveis; a ausência de sugestão significa que nenhuma posição elegível foi encontrada com os dados e regras atuais, e não que o sistema deva ignorar as restrições.
 
