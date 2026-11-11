@@ -179,7 +179,7 @@ describe("recommendStorageLocations", () => {
         ["area", "slot-10", "unknown-capacity"].includes(location.id),
       ),
       levels,
-      balances: balances.filter((balance) => balance.location_id === "slot-10"),
+      balances: [],
       materials,
       warehouses,
     });
@@ -235,6 +235,22 @@ describe("recommendStorageLocations", () => {
     expect(suggestions[0]?.location.id).toBe("slot-10");
     expect(suggestions[0]?.sameStructuralGroup).toBe(true);
     expect(suggestions.find((item) => item.location.id === "slot-b")?.sameStructuralGroup).toBe(false);
+  });
+
+  it("does not suggest the source address as a transfer destination", () => {
+    const suggestions = recommendStorageLocations({
+      material: materials[0]!,
+      requestedQuantity: 5,
+      locations,
+      levels,
+      balances: [],
+      materials,
+      warehouses,
+      preferredLocationId: "slot-2",
+      excludeLocationId: "slot-2",
+    });
+
+    expect(suggestions.map((suggestion) => suggestion.location.id)).not.toContain("slot-2");
   });
 
   it("does not recommend positions with incompatible category or capacity units", () => {
