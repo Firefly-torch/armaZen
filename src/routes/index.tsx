@@ -1234,6 +1234,8 @@ function Index() {
           levels,
           balances,
           warehouses,
+          preferredLocationId: moveForm.from_location_id || undefined,
+          preferredLot: moveForm.lot,
         })
       : null;
 
