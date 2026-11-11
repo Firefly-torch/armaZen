@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  assessLocationAllocation,
   getStorageLocationIds,
   summarizeDescendantOccupancy,
+  summarizeLocationCapacity,
   summarizeMaterialBalances,
 } from "@/lib/warehouse-stock";
 
@@ -114,6 +116,9 @@ describe("summarizeDescendantOccupancy", () => {
       measurablePositions: 2,
       totalPositions: 4,
       occupiedPositions: 4,
+      overCapacityPositions: 0,
+      unknownCapacityPositions: 1,
+      incompatiblePositions: 1,
     });
   });
 
@@ -126,6 +131,9 @@ describe("summarizeDescendantOccupancy", () => {
       measurablePositions: 2,
       totalPositions: 2,
       occupiedPositions: 1,
+      overCapacityPositions: 0,
+      unknownCapacityPositions: 0,
+      incompatiblePositions: 0,
     });
   });
 
@@ -138,6 +146,132 @@ describe("summarizeDescendantOccupancy", () => {
       measurablePositions: 0,
       totalPositions: 2,
       occupiedPositions: 2,
+      overCapacityPositions: 0,
+      unknownCapacityPositions: 1,
+      incompatiblePositions: 1,
     });
+  });
+});
+
+
+describe("summarizeLocationCapacity", () => {
+  it("does not present an unconfigured capacity as zero percent or free space", () => {
+    expect(summarizeLocationCapacity(null, null, [])).toMatchObject({
+      status: "unknown",
+      percentage: null,
+      remaining: null,
+      overCapacity: false,
+    });
+  });
+
+  it("keeps an over-capacity reading above 100 percent instead of hiding the excess", () => {
+    expect(summarizeLocationCapacity(100, "kg", [
+      { quantity: 125, unit: "kg" },
+    })).toMatchObject({
+      status: "measurable",
+      occupiedQuantity: 125,
+      percentage: 125,
+      remaining: 0,
+      overCapacity: true,
+    });
+  });
+
+  it("does not mix incompatible measurement units", () => {
+    expect(summarizeLocationCapacity(100, "kg", [
+      { quantity: 10, unit: "L" },
+    })).toMatchObject({
+      status: "incompatible",
+      percentage: null,
+      remaining: null,
+    });
+  });
+});
+
+describe("assessLocationAllocation", () => {
+  const material = { id: "mat-a", category: "Ferragens", unit: "kg" };
+  const location = {
+    id: "position",
+    active: true,
+    status: "disponivel",
+    capacity: 100,
+    capacity_unit: "kg",
+    allow_mixed_materials: true,
+    allowed_categories: ["ferragens"],
+  };
+
+  it("blocks an allocation that would exceed the configured capacity", () => {
+    const assessment = assessLocationAllocation(
+      location,
+      material,
+      15,
+      [{ material_id: material.id, location_id: location.id, quantity: 90 }],
+      [material],
+    );
+
+    expect(assessment.allowed).toBe(false);
+    expect(assessment.message).toContain("Capacidade excedida");
+  });
+
+  it("blocks a material category not allowed at the destination", () => {
+    const assessment = assessLocationAllocation(
+      location,
+      { id: "chemical", category: "Químicos", unit: "kg" },
+      1,
+      [],
+      [material],
+    );
+
+    expect(assessment.allowed).toBe(false);
+    expect(assessment.message).toContain("não é permitida");
+  });
+
+  it("blocks a second material when the destination is configured for a single material", () => {
+    const assessment = assessLocationAllocation(
+      { ...location, allow_mixed_materials: false },
+      { id: "mat-b", category: "Ferragens", unit: "kg" },
+      1,
+      [{ material_id: "mat-a", location_id: location.id, quantity: 5 }],
+      [material],
+    );
+
+    expect(assessment.allowed).toBe(false);
+    expect(assessment.message).toContain("apenas um material");
+  });
+
+  it("allows a compatible destination with capacity still available", () => {
+    const assessment = assessLocationAllocation(
+      location,
+      material,
+      5,
+      [{ material_id: material.id, location_id: location.id, quantity: 20 }],
+      [material],
+    );
+
+    expect(assessment).toMatchObject({
+      allowed: true,
+      status: "within_capacity",
+      currentQuantity: 20,
+      projectedQuantity: 25,
+      remainingCapacity: 75,
+    });
+  });
+
+  it("allows operation with unknown capacity only while clearly reporting the uncertainty", () => {
+    const assessment = assessLocationAllocation(
+      { ...location, capacity: null, capacity_unit: null },
+      material,
+      5,
+      [],
+      [material],
+    );
+
+    expect(assessment).toMatchObject({
+      allowed: true,
+      status: "unknown_capacity",
+      currentQuantity: null,
+      projectedQuantity: null,
+      remainingCapacity: null,
+    });
+    expect(assessment.message).toContain("indeterminada");
   });
 });
