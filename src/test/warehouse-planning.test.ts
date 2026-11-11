@@ -76,6 +76,20 @@ const locations: PlanningLocation[] = [
     allowed_categories: [],
   },
   {
+    id: "unit-mismatch-slot",
+    warehouse_id: "wh",
+    parent_id: "area",
+    level_id: "storage",
+    code: "A-15",
+    name: "Posição com unidade incompatível",
+    active: true,
+    status: "disponivel",
+    capacity: 100,
+    capacity_unit: "L",
+    allow_mixed_materials: true,
+    allowed_categories: [],
+  },
+  {
     id: "reserved-slot",
     warehouse_id: "wh",
     parent_id: "area",
@@ -127,7 +141,7 @@ const locations: PlanningLocation[] = [
 
 const materials: PlanningMaterial[] = [
   { id: "mat-a", code: "MAT-A", category: "Ferragens", unit: "kg" },
-  { id: "mat-b", code: "MAT-B", category: "Químicos", unit: "L" },
+  { id: "mat-b", code: "MAT-B", category: "Químicos", unit: "kg" },
 ];
 
 const balances: PlanningBalance[] = [
@@ -216,7 +230,7 @@ describe("recommendStorageLocations", () => {
         name: "Posição B-01",
         active: true,
         status: "disponivel",
-        capacity: 100,
+        capacity: 20,
         capacity_unit: "kg",
       },
     ];
@@ -271,6 +285,7 @@ describe("recommendStorageLocations", () => {
     });
 
     expect(suggestions.map((suggestion) => suggestion.location.id)).not.toContain("slot-10");
+    expect(suggestions.map((suggestion) => suggestion.location.id)).not.toContain("unit-mismatch-slot");
   });
 });
 
