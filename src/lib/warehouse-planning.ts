@@ -67,6 +67,7 @@ export type StorageRecommendationOptions = {
   warehouses?: PlanningWarehouse[];
   warehouseId?: string;
   preferredLocationId?: string;
+  excludeLocationId?: string;
   allowReserved?: boolean;
   limit?: number;
 };
@@ -133,6 +134,7 @@ export function recommendStorageLocations(
     warehouses = [],
     warehouseId,
     preferredLocationId,
+    excludeLocationId,
     allowReserved = false,
     limit = 5,
   } = options;
@@ -151,6 +153,7 @@ export function recommendStorageLocations(
   const candidates: StorageRecommendation[] = [];
 
   for (const location of locations) {
+    if (location.id === excludeLocationId) continue;
     if (!storageLocationIds.has(location.id)) continue;
     if (warehouseId && location.warehouse_id !== warehouseId) continue;
     if (location.status !== "disponivel" && !(allowReserved && location.status === "reservado")) continue;
