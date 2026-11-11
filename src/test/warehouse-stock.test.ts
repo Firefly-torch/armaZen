@@ -151,6 +151,21 @@ describe("summarizeDescendantOccupancy", () => {
       incompatiblePositions: 1,
     });
   });
+
+  it("counts over-capacity descendants and keeps the measured average above 100 percent", () => {
+    expect(summarizeDescendantOccupancy([
+      { capacity: 100, capacity_unit: "kg", balances: [{ quantity: 125, unit: "kg" }] },
+      { capacity: 100, capacity_unit: "kg", balances: [{ quantity: 50, unit: "kg" }] },
+    ])).toMatchObject({
+      averagePercent: 88,
+      measurablePositions: 2,
+      totalPositions: 2,
+      occupiedPositions: 2,
+      overCapacityPositions: 1,
+      unknownCapacityPositions: 0,
+      incompatiblePositions: 0,
+    });
+  });
 });
 
 
