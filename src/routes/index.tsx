@@ -1221,6 +1221,7 @@ function Index() {
           materials,
           warehouses,
           preferredLocationId: moveForm.type === "transferencia" ? moveForm.from_location_id || undefined : undefined,
+          excludeLocationId: moveForm.type === "transferencia" ? moveForm.from_location_id || undefined : undefined,
           limit: 5,
         })
       : [];
