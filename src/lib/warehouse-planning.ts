@@ -212,13 +212,15 @@ export function recommendStorageLocations(
     const leftStatus = left.location.status === "disponivel" ? 0 : 1;
     const rightStatus = right.location.status === "disponivel" ? 0 : 1;
     if (leftStatus !== rightStatus) return leftStatus - rightStatus;
+    // Every measurable position ranks before an unknown-capacity position,
+    // even when the latter already contains this material.
+    if (left.status !== right.status) return left.status === "within_capacity" ? -1 : 1;
     if (left.sameMaterialAlreadyStored !== right.sameMaterialAlreadyStored) {
       return left.sameMaterialAlreadyStored ? -1 : 1;
     }
     if (left.sameStructuralGroup !== right.sameStructuralGroup) {
       return left.sameStructuralGroup ? -1 : 1;
     }
-    if (left.status !== right.status) return left.status === "within_capacity" ? -1 : 1;
     if (
       left.remainingCapacity !== null &&
       right.remainingCapacity !== null &&
