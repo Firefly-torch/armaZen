@@ -16,6 +16,18 @@ Endereços-pai não recebem saldo operacional. A ocupação apresentada neles é
 
 A ocupação física considera saldos disponíveis, reservados e bloqueados nas posições finais. Saldo antigo registrado diretamente no endereço-pai continua separado para revisão e não é somado novamente à ocupação dos subendereços.
 
+## Capacidade e compatibilidade de armazenagem
+
+A capacidade é configurada por posição final e deve usar a mesma unidade cadastrada no material. O armaZen não converte automaticamente kg, L, un ou outras unidades. Quando a unidade não corresponde, a ocupação fica sem cálculo e uma nova alocação é bloqueada até que o cadastro ou os saldos sejam conferidos.
+
+Quando a capacidade não foi informada, o sistema apresenta a ocupação como **indeterminada**. Isso não significa que a posição esteja vazia ou tenha espaço livre. A entrada ou transferência ainda pode ser registrada após confirmação do operador, mas a aplicação não inventa uma capacidade nem estima o espaço restante.
+
+Para posições com capacidade mensurável, entradas e transferências verificam a quantidade já registrada mais a quantidade solicitada. O banco bloqueia a operação quando o total projetado supera o limite, serializando as alocações por endereço para evitar que duas entradas simultâneas consumam o mesmo espaço restante. Alterar a capacidade para um valor inferior ao saldo atual também é bloqueado.
+
+Cada endereço pode permitir materiais diferentes ou ser configurado para **material único**. Material único permite vários lotes do mesmo material, mas impede adicionar outro material enquanto houver saldo. A lista de categorias permitidas restringe o destino às categorias cadastradas; uma lista vazia significa que todas as categorias são aceitas. As regras são verificadas no banco, além da pré-validação apresentada na tela, para cobrir diferentes fluxos de movimentação.
+
+As contagens físicas, os estornos e a reconstrução do livro de movimentações preservam a realidade e o histórico: esses procedimentos podem restaurar ou registrar saldos mesmo quando o resultado excede a capacidade ou diverge de uma regra de armazenagem atual. A sobrecarga permanece visível como exceção no mapa e deve ser tratada pela equipe; o sistema não altera contagens para fazer o saldo caber no limite.
+
 ## Reorganização da hierarquia
 
 No mapa, arrastar um endereço sobre um endereço estrutural transfere-o para dentro desse grupo. Arrastar sobre uma posição final transfere-o para o mesmo grupo dessa posição. Arrastar entre endereços que já pertencem ao mesmo grupo continua apenas trocando suas posições visuais. A operação preserva os subendereços do item movido, atribui uma célula visual livre e impede relações circulares, mudanças entre armazéns e o uso de níveis de armazenagem como endereço-pai.
@@ -60,7 +72,7 @@ As regras reforçam o controle de materiais, a acuracidade dos registros, a iden
 ## Limitações técnicas conhecidas
 
 - Os indicadores e listas ainda dependem de consultas no frontend limitadas a 1.000 registros. Para operações maiores, devem ser substituídas por agregações no PostgreSQL e paginação.
-- A capacidade do endereço é uma referência para estimar ocupação no mapa. A aplicação ainda não bloqueia entradas ou transferências que ultrapassem o valor cadastrado; a unidade da capacidade também precisa ser compatível com a unidade do material para que o percentual seja calculado.
+- A capacidade e as regras de compatibilidade são aplicadas pelo banco a novas entradas e transferências. A comparação exige igualdade de unidade e não realiza conversões. Endereços sem capacidade continuam operacionais após confirmação, mas a ocupação e o espaço restante permanecem indeterminados. A regra de capacidade não substitui análise de peso distribuído, volume geométrico, empilhamento, estabilidade da carga ou limites de segurança definidos para a instalação.
 - O cadastro do material pode exigir identificação do lote. Novas entradas sem lote são bloqueadas; saldos legados já registrados sem lote continuam podendo ser retirados, transferidos ou contados na posição original. A data de validade aparece quando existe no registro/exportação, mas o fluxo normal de entrada ainda não oferece campo para registrá-la; portanto, o sistema não deve ser usado como controle completo de vencimento até essa etapa ser implementada.
 - A devolução de obra é registrada como entrada vinculada a uma referência textual da obra. O sistema ainda não concilia automaticamente a devolução com uma saída anterior nem limita a quantidade devolvida ao que foi retirado.
 - O estoque mínimo é uma referência cadastrada manualmente; não há previsão estatística de consumo, lead time, pedidos de compra abertos ou reserva formal por obra.
