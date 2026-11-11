@@ -29,6 +29,21 @@ begin
   end if;
 
   if new.capacity is not null then
+    if not exists (
+      select 1
+        from public.location_levels lv
+       where lv.id = new.level_id
+         and lv.org_id = new.org_id
+         and lv.warehouse_id = new.warehouse_id
+         and lv.is_storage
+    ) or exists (
+      select 1
+        from public.locations child
+       where child.parent_id = new.id
+    ) then
+      raise exception 'A capacidade deve ser configurada em uma posição final de armazenagem, não em um endereço estrutural.';
+    end if;
+
     if new.capacity <= 0 then
       raise exception 'A capacidade máxima precisa ser maior que zero.';
     end if;
