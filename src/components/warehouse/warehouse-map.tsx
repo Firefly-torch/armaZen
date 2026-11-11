@@ -772,7 +772,6 @@ export function WarehouseMap({
     const expiryCounts = getExpiryCounts(location.id);
     const materialCount = new Set(directBalances.map((balance) => balance.material_id)).size;
     const openTaskCount = tasks.filter((task) => task.location_id === location.id && task.status !== "concluida").length;
-    const unitTotals = getUnitTotals(location.id);
     const descendantOccupancy = hasChildren
       ? descendantOccupancyByLocation.get(location.id) ?? null
       : null;
@@ -866,7 +865,15 @@ export function WarehouseMap({
                   {levelsById.get(location.level_id)?.name ?? "Nível"}
                 </span>
                 <span className="rounded-full border bg-background/80 px-2 py-0.5 text-[10px] font-medium">
-                  {hasChildren ? "Estrutura · não armazena" : storageLocationIds.has(location.id) ? (directBalances.length ? "Com saldo" : "Posição vazia") : "Não é posição de armazenagem"}
+                  {hasChildren
+                    ? "Estrutura · não armazena"
+                    : storageLocationIds.has(location.id)
+                      ? directBalances.length
+                        ? "Com saldo"
+                        : capacitySummary.status === "unknown"
+                          ? "Sem saldo · capacidade indeterminada"
+                          : "Sem saldo"
+                      : "Não é posição de armazenagem"}
                 </span>
                 {storageLocationIds.has(location.id) && (
                   <span className="rounded-full border bg-background/80 px-2 py-0.5 text-[10px] font-medium">
