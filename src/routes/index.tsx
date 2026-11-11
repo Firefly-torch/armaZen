@@ -1342,6 +1342,7 @@ function Index() {
         const {data,error}=await db.from("inventory_counts").insert(payload).select("*").single();
         if(error)throw error;
         setInventoryForm({warehouse_id:"todos",description:""});
+        setCycleCountTarget(null);
         setSelectedInventoryId(data.id);
       },"Sessão de inventário criada.");}}>
         <Field label="Descrição" value={inventoryForm.description} onChange={v=>setInventoryForm({...inventoryForm,description:v})} placeholder="Ex.: Contagem cíclica semanal"/>
@@ -1846,7 +1847,7 @@ function AdjustmentForm({ orgId, materials, balances, locations, saving, onSave,
     onDone();
   },"Ajuste de inventário registrado.");}}>
     <SelectField label="Material" value={form.material_id} onChange={v=>setForm({...form,material_id:v})} required options={materials.filter(m=>m.status==="ativo"||m.status==="active").map(m=>({value:m.id,label:`${m.code} — ${m.description}`}))}/>
-    <SelectField label="Endereço" value={form.location_id} onChange={v=>setForm({...form,location_id:v})} required options={locations.filter(l=>l.active&&l.status!=="bloqueado"&&(!warehouseId||l.warehouse_id===warehouseId)).map(l=>({value:l.id,label:`${l.code} — ${l.name}`}))}/>
+    <SelectField label="Endereço" value={form.location_id} onChange={v=>setForm({...form,location_id:v})} required options={locations.filter(l=>l.active&&(l.status!=="bloqueado"||l.id===initialTarget?.locationId)&&(!warehouseId||l.warehouse_id===warehouseId)).map(l=>({value:l.id,label:`${l.code} — ${l.name}`}))}/>
     <Field label="Lote" value={form.lot} onChange={v=>setForm({...form,lot:v})} required={requiresLot}/>
     <Field label="Quantidade contada" type="number" min={0} step={0.01} value={form.counted} onChange={v=>setForm({...form,counted:v})} required/>
     <Field label="Motivo obrigatório" value={form.reason} onChange={v=>setForm({...form,reason:v})} required/>
