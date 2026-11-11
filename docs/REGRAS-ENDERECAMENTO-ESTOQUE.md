@@ -28,6 +28,28 @@ Cada endereço pode permitir materiais diferentes ou ser configurado para **mate
 
 As contagens físicas, os estornos e a reconstrução do livro de movimentações preservam a realidade e o histórico: esses procedimentos podem restaurar ou registrar saldos mesmo quando o resultado excede a capacidade ou diverge de uma regra de armazenagem atual. A sobrecarga permanece visível como exceção no mapa e deve ser tratada pela equipe; o sistema não altera contagens para fazer o saldo caber no limite.
 
+## Sugestões de endereçamento e separação (picking)
+
+As sugestões de endereçamento são apresentadas nas entradas e transferências como apoio à decisão do operador. O sistema considera somente posições finais de armazenagem ativas, em armazéns ativos, e reaplica as regras de capacidade, unidade, categoria e materiais mistos. Endereços bloqueados, estruturais, inativos ou incompatíveis são excluídos. Endereços reservados não são sugeridos na rotina comum de entrada e transferência.
+
+A classificação é explicável e determinística. A ordenação segue esta prioridade:
+1. Posições disponíveis antes de posições reservadas (quando estas forem explicitamente permitidas).
+2. Posições com capacidade mensurável antes das que têm capacidade indeterminada.
+3. Posições que já armazenam o mesmo material, para facilitar a consolidação.
+4. Em transferências, posições no mesmo grupo estrutural da origem, sem assumir que isso represente menor distância física.
+5. Entre opções com os mesmos critérios anteriores, melhor encaixe: menor espaço restante após a alocação.
+6. Desempate pelo caminho hierárquico e código do endereço, em ordem numérica e alfabética estável.
+
+Posições sem capacidade cadastrada aparecem depois das opções mensuráveis, com aviso de capacidade indeterminada e necessidade de conferência física.
+
+As sugestões mostram o motivo da classificação e não executam movimentações, reservas ou alterações de saldo. A escolha do destino e a confirmação da movimentação continuam sendo ações do operador. A lista mostra até cinco opções compatíveis; a ausência de sugestão significa que nenhuma posição elegível foi encontrada com os dados e regras atuais, e não que o sistema deva ignorar as restrições.
+
+A sequência de picking usa somente saldo disponível em posições finais ativas de armazéns ativos. Saldos em endereços reservados, bloqueados, estruturais ou inativos são excluídos. A ordem é estável: armazém, caminho hierárquico do endereço (com comparação numérica dos códigos), validade cadastrada mais próxima dentro da mesma posição e identificação do lote. A sequência distribui a quantidade solicitada entre lotes/posições sem ultrapassar o saldo disponível e informa eventual quantidade não atendida.
+
+O operador seleciona cada etapa e registra a saída correspondente. Quando a separação envolve mais de uma posição, deve registrar uma movimentação por etapa e recalcular o restante após a atualização do saldo. A sugestão não cria tarefa, não reserva estoque e não baixa materiais automaticamente.
+
+O mapa utiliza posições esquemáticas; portanto, a aplicação não usa suas coordenadas visuais para declarar a menor distância ou a rota física mais curta. A ordenação hierárquica é um critério repetível de organização, não um algoritmo de otimização de percurso no chão do armazém.
+
 ## Reorganização da hierarquia
 
 No mapa, arrastar um endereço sobre um endereço estrutural transfere-o para dentro desse grupo. Arrastar sobre uma posição final transfere-o para o mesmo grupo dessa posição. Arrastar entre endereços que já pertencem ao mesmo grupo continua apenas trocando suas posições visuais. A operação preserva os subendereços do item movido, atribui uma célula visual livre e impede relações circulares, mudanças entre armazéns e o uso de níveis de armazenagem como endereço-pai.
