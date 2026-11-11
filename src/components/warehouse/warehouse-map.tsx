@@ -4,6 +4,10 @@ import {
   summarizeDescendantOccupancy,
 } from "@/lib/warehouse-stock";
 import {
+  buildWarehouseHierarchyFilterSteps,
+  isLocationWithinBranch,
+} from "@/lib/warehouse-map-filters";
+import {
   ArrowDown,
   ArrowLeft,
   ArrowRight,
@@ -34,7 +38,9 @@ type WarehouseItem = {
 
 type LevelItem = {
   id: string;
+  warehouse_id: string;
   name: string;
+  sort_order: number;
   is_storage: boolean;
 };
 
@@ -202,6 +208,8 @@ export function WarehouseMap({
 }: WarehouseMapProps) {
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("todos");
+  const [levelFilter, setLevelFilter] = useState("todos");
+  const [hierarchyPathFilter, setHierarchyPathFilter] = useState<string[]>([]);
   const [zoom, setZoom] = useState(85);
   const [editMode, setEditMode] = useState(false);
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
@@ -227,6 +235,13 @@ export function WarehouseMap({
       ),
     [locations, selectedWarehouseId],
   );
+  const warehouseLevels = useMemo(
+    () =>
+      levels
+        .filter((level) => level.warehouse_id === selectedWarehouseId)
+        .sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name, "pt-BR")),
+    [levels, selectedWarehouseId],
+  );
 
   const levelsById = useMemo(
     () => new Map(levels.map((level) => [level.id, level])),
@@ -239,6 +254,14 @@ export function WarehouseMap({
   const locationsById = useMemo(
     () => new Map(warehouseLocations.map((location) => [location.id, location])),
     [warehouseLocations],
+  );
+  const hierarchyFilterSteps = useMemo(
+    () => buildWarehouseHierarchyFilterSteps(warehouseLocations, warehouseLevels, hierarchyPathFilter),
+    [warehouseLocations, warehouseLevels, hierarchyPathFilter],
+  );
+  const selectedBranchId = hierarchyFilterSteps.reduce(
+    (selected, step) => step.selectedId || selected,
+    "",
   );
   useEffect(() => {
     if (!draggedId || !dragPointerRef.current) return;
@@ -475,7 +498,10 @@ export function WarehouseMap({
       (statusFilter === "estoque_baixo" && isLowStock(location.id)) ||
       (statusFilter === "validade_vencida" && getExpiryCounts(location.id).expired > 0) ||
       (statusFilter === "validade_proxima" && getExpiryCounts(location.id).near > 0);
-    return searchMatch && statusMatch;
+    const levelMatch = levelFilter === "todos" || location.level_id === levelFilter;
+    const hierarchyMatch =
+      !selectedBranchId || isLocationWithinBranch(location.id, selectedBranchId, locationsById);
+    return searchMatch && statusMatch && levelMatch && hierarchyMatch;
   };
 
   const branchMatchCache = new Map<string, boolean>();
@@ -494,6 +520,12 @@ export function WarehouseMap({
   };
 
   const matchesCount = warehouseLocations.filter((location) => directMatch(location)).length;
+  const hasActiveFilters = Boolean(
+    normalizedQuery ||
+    statusFilter !== "todos" ||
+    levelFilter !== "todos" ||
+    selectedBranchId
+  );
   const selectedLocation = locationsById.get(selectedLocationId);
   const selectedPosition = selectedLocation
     ? positionsByParent.get(selectedLocation.parent_id ?? null)?.get(selectedLocation.id)
@@ -727,7 +759,7 @@ export function WarehouseMap({
   function renderLocationNode(location: LocationItem, depth: number): ReactNode {
     const children = childrenByParent.get(location.id) ?? [];
     const hasChildren = children.length > 0;
-    const isCollapsed = collapsed.has(location.id);
+    const isCollapsed = collapsed.has(location.id) && !hasActiveFilters;
     const directBalances = getLocationBalances(location.id);
     const expiryCounts = getExpiryCounts(location.id);
     const materialCount = new Set(directBalances.map((balance) => balance.material_id)).size;
@@ -882,9 +914,10 @@ export function WarehouseMap({
             {hasChildren && (
               <button
                 type="button"
-                className="rounded-md border bg-background/80 p-1.5"
-                title={isCollapsed ? "Expandir estrutura" : "Recolher estrutura"}
+                className="rounded-md border bg-background/80 p-1.5 disabled:opacity-40"
+                title={hasActiveFilters ? "Limpe os filtros para recolher a hierarquia" : isCollapsed ? "Expandir estrutura" : "Recolher estrutura"}
                 aria-label={isCollapsed ? "Expandir " + location.code : "Recolher " + location.code}
+                disabled={hasActiveFilters}
                 onClick={() =>
                   setCollapsed((current) => {
                     const next = new Set(current);
@@ -1078,6 +1111,10 @@ export function WarehouseMap({
             value={selectedWarehouseId}
             onChange={(event) => {
               onWarehouseChange(event.target.value);
+              setQuery("");
+              setStatusFilter("todos");
+              setLevelFilter("todos");
+              setHierarchyPathFilter([]);
               onSelectLocation(null);
             }}
           >
@@ -1124,6 +1161,33 @@ export function WarehouseMap({
             </select>
           </span>
         </label>
+        <label className="grid min-w-48 flex-1 gap-1 text-xs">
+          <span className="font-medium text-muted-foreground">Filtrar por nível</span>
+          <select
+            className="h-9 w-full rounded-lg border bg-background px-3"
+            value={levelFilter}
+            onChange={(event) => setLevelFilter(event.target.value)}
+          >
+            <option value="todos">Todos os níveis</option>
+            {warehouseLevels.map((level) => (
+              <option key={level.id} value={level.id}>{level.name}</option>
+            ))}
+          </select>
+        </label>
+        <button
+          type="button"
+          className="h-9 rounded-lg border px-3 text-xs disabled:opacity-40"
+          disabled={!hasActiveFilters}
+          onClick={() => {
+            setQuery("");
+            setStatusFilter("todos");
+            setLevelFilter("todos");
+            setHierarchyPathFilter([]);
+            onSelectLocation(null);
+          }}
+        >
+          Limpar filtros
+        </button>
         <div className="flex flex-wrap gap-1.5">
           <button
             type="button"
@@ -1165,8 +1229,10 @@ export function WarehouseMap({
           </button>
           <button
             type="button"
-            className="h-9 rounded-lg border px-3 text-xs"
+            className="h-9 rounded-lg border px-3 text-xs disabled:opacity-40"
             onClick={() => setCollapsed(new Set(warehouseLocations.map((location) => location.id)))}
+            disabled={hasActiveFilters}
+            title={hasActiveFilters ? "Limpe os filtros para recolher a hierarquia" : "Recolher toda a hierarquia"}
           >
             Recolher tudo
           </button>
@@ -1189,6 +1255,52 @@ export function WarehouseMap({
           </button>
         )}
       </div>
+
+      {hierarchyFilterSteps.length > 0 && (
+        <div className="mt-3 rounded-lg border bg-muted/15 p-3">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p className="text-xs font-semibold">Navegação por hierarquia</p>
+              <p className="mt-0.5 text-[11px] text-muted-foreground">Selecione um endereço estrutural. Os próximos seletores usam os níveis configurados neste armazém, sem assumir uma hierarquia fixa.</p>
+            </div>
+            <button
+              type="button"
+              className="h-8 rounded-md border px-2.5 text-xs disabled:opacity-40"
+              disabled={!selectedBranchId}
+              onClick={() => {
+                setHierarchyPathFilter([]);
+                onSelectLocation(null);
+              }}
+            >
+              Limpar caminho
+            </button>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+            {hierarchyFilterSteps.map((step) => (
+              <label key={step.depth} className="grid min-w-0 gap-1.5 text-xs">
+                <span className="font-medium text-muted-foreground">Filtrar por {step.label.toLocaleLowerCase("pt-BR")}</span>
+                <select
+                  className="h-9 min-w-0 w-full rounded-lg border bg-background px-3"
+                  value={step.selectedId}
+                  onChange={(event) => {
+                    const nextPath = hierarchyPathFilter.slice(0, step.depth);
+                    if (event.target.value) nextPath.push(event.target.value);
+                    setHierarchyPathFilter(nextPath);
+                    onSelectLocation(null);
+                  }}
+                >
+                  <option value="">Todos</option>
+                  {step.options.map((location) => (
+                    <option key={location.id} value={location.id}>
+                      {location.code} — {location.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
 
       {editMode && (
         <div className="mt-3 rounded-lg border border-primary/30 bg-primary/5 p-3 text-xs text-muted-foreground">
@@ -1238,6 +1350,10 @@ export function WarehouseMap({
         <div className="mt-4 rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
           Não existem endereços ativos cadastrados neste armazém.
         </div>
+      ) : matchesCount === 0 ? (
+        <div className="mt-4 rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
+          Nenhum endereço corresponde à combinação atual de pesquisa e filtros. Limpe os filtros para voltar a visualizar todo o armazém.
+        </div>
       ) : (
         <div className="mt-4 min-w-0 max-w-full max-h-[72vh] overflow-y-auto overflow-x-hidden rounded-xl border bg-muted/10 p-2 sm:p-4">
           <div
@@ -1249,9 +1365,9 @@ export function WarehouseMap({
         </div>
       )}
 
-      {normalizedQuery && (
+      {hasActiveFilters && (
         <p className="mt-2 text-xs text-muted-foreground">
-          {matchesCount} endereço(s) correspondem diretamente à pesquisa. Os níveis superiores permanecem visíveis para preservar o contexto da localização.
+          {matchesCount} endereço(s) correspondem aos filtros aplicados. Os endereços-pai necessários permanecem visíveis para preservar o contexto da localização.
         </p>
       )}
 
