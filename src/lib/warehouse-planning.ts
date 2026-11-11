@@ -1,7 +1,6 @@
 import {
   assessLocationAllocation,
   getStorageLocationIds,
-  summarizeLocationCapacity,
 } from "@/lib/warehouse-stock";
 
 export type PlanningWarehouse = {
@@ -178,15 +177,6 @@ export function recommendStorageLocations(
       preferredLocation.parent_id !== null &&
       location.parent_id === preferredLocation.parent_id,
     );
-    const capacity = summarizeLocationCapacity(
-      location.capacity,
-      location.capacity_unit,
-      locationBalances.map((balance) => ({
-        quantity: balance.quantity,
-        unit: materials.find((candidate) => candidate.id === balance.material_id)?.unit ?? null,
-      })),
-    );
-
     const reasons: string[] = [];
     if (sameMaterialAlreadyStored) {
       reasons.push("Já armazena este material; favorece a consolidação do estoque.");
@@ -202,9 +192,6 @@ export function recommendStorageLocations(
       );
     } else {
       reasons.push("Capacidade indeterminada; exige conferência física pelo operador.");
-    }
-    if (capacity.overCapacity) {
-      reasons.push("A posição já apresenta saldo acima da capacidade cadastrada.");
     }
     if (location.status === "reservado") {
       reasons.push("Endereço reservado; confirme que a finalidade da armazenagem é compatível.");
