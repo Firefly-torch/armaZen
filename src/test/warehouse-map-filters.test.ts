@@ -58,7 +58,7 @@ describe("buildWarehouseHierarchyFilterSteps", () => {
 });
 
 describe("isLocationWithinBranch", () => {
-  const locationsById = new Map(locations.map((location) => [location.id, location]));
+  const locationsById = new Map(locations.map((location) => [location.id, location] as const));
 
   it("matches the branch root and its descendants, but not sibling branches", () => {
     expect(isLocationWithinBranch("corridor-a1", "sector-a", locationsById)).toBe(true);
