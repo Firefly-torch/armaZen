@@ -759,7 +759,7 @@ export function WarehouseMap({
   function renderLocationNode(location: LocationItem, depth: number): ReactNode {
     const children = childrenByParent.get(location.id) ?? [];
     const hasChildren = children.length > 0;
-    const isCollapsed = collapsed.has(location.id);
+    const isCollapsed = collapsed.has(location.id) && !hasActiveFilters;
     const directBalances = getLocationBalances(location.id);
     const expiryCounts = getExpiryCounts(location.id);
     const materialCount = new Set(directBalances.map((balance) => balance.material_id)).size;
@@ -914,9 +914,10 @@ export function WarehouseMap({
             {hasChildren && (
               <button
                 type="button"
-                className="rounded-md border bg-background/80 p-1.5"
-                title={isCollapsed ? "Expandir estrutura" : "Recolher estrutura"}
+                className="rounded-md border bg-background/80 p-1.5 disabled:opacity-40"
+                title={hasActiveFilters ? "Limpe os filtros para recolher a hierarquia" : isCollapsed ? "Expandir estrutura" : "Recolher estrutura"}
                 aria-label={isCollapsed ? "Expandir " + location.code : "Recolher " + location.code}
+                disabled={hasActiveFilters}
                 onClick={() =>
                   setCollapsed((current) => {
                     const next = new Set(current);
@@ -1228,8 +1229,10 @@ export function WarehouseMap({
           </button>
           <button
             type="button"
-            className="h-9 rounded-lg border px-3 text-xs"
+            className="h-9 rounded-lg border px-3 text-xs disabled:opacity-40"
             onClick={() => setCollapsed(new Set(warehouseLocations.map((location) => location.id)))}
+            disabled={hasActiveFilters}
+            title={hasActiveFilters ? "Limpe os filtros para recolher a hierarquia" : "Recolher toda a hierarquia"}
           >
             Recolher tudo
           </button>
@@ -1258,7 +1261,7 @@ export function WarehouseMap({
           <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
             <div>
               <p className="text-xs font-semibold">Navegação por hierarquia</p>
-              <p className="mt-0.5 text-[11px] text-muted-foreground">Selecione setor, corredor, estante ou outro nível cadastrado. Os níveis seguintes aparecem conforme o endereço pai escolhido.</p>
+              <p className="mt-0.5 text-[11px] text-muted-foreground">Selecione um endereço estrutural. Os próximos seletores usam os níveis configurados neste armazém, sem assumir uma hierarquia fixa.</p>
             </div>
             <button
               type="button"
