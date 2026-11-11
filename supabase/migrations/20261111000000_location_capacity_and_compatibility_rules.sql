@@ -19,9 +19,11 @@ security definer
 set search_path = public
 as $$
 declare
-  v_capacity_unit text := lower(nullif(trim(new.capacity_unit), ''));
+  v_capacity_unit text;
   v_current_quantity numeric := 0;
 begin
+  v_capacity_unit := lower(nullif(trim(new.capacity_unit), ''));
+
   if new.allowed_categories is null then
     new.allowed_categories := '{}'::text[];
   end if;
@@ -178,16 +180,27 @@ begin
   v_capacity_unit := lower(nullif(trim(v_location.capacity_unit), ''));
 
   if not coalesce(v_location.allow_mixed_materials, true) then
-    if tg_op = 'UPDATE' and old.location_id = new.location_id then
-      select exists (
-        select 1
-          from public.inventory_balances b
-         where b.org_id = new.org_id
-           and b.location_id = new.location_id
-           and b.quantity > 0
-           and b.material_id <> new.material_id
-           and not (b.material_id = old.material_id and b.lot = old.lot)
-      ) into v_other_material;
+    if tg_op = 'UPDATE' then
+      if old.location_id = new.location_id then
+        select exists (
+          select 1
+            from public.inventory_balances b
+           where b.org_id = new.org_id
+             and b.location_id = new.location_id
+             and b.quantity > 0
+             and b.material_id <> new.material_id
+             and not (b.material_id = old.material_id and b.lot = old.lot)
+        ) into v_other_material;
+      else
+        select exists (
+          select 1
+            from public.inventory_balances b
+           where b.org_id = new.org_id
+             and b.location_id = new.location_id
+             and b.quantity > 0
+             and b.material_id <> new.material_id
+        ) into v_other_material;
+      end if;
     else
       select exists (
         select 1
@@ -219,24 +232,38 @@ begin
       v_location.capacity_unit, v_material.unit;
   end if;
 
-  if tg_op = 'UPDATE' and old.location_id = new.location_id then
-    -- Exclude the row being replaced, including when the material/lot changes.
-    select
-      coalesce(sum(b.quantity), 0),
-      coalesce(bool_or(lower(trim(m.unit)) <> v_capacity_unit), false)
-      into v_other_quantity, v_incompatible_unit
-      from public.inventory_balances b
-      join public.materials m
-        on m.id = b.material_id
-       and m.org_id = b.org_id
-     where b.org_id = new.org_id
-       and b.location_id = new.location_id
-       and b.quantity > 0
-       and not (b.material_id = old.material_id and b.lot = old.lot);
-  elsif tg_op = 'INSERT' then
+  if tg_op = 'UPDATE' then
+    if old.location_id = new.location_id then
+      -- Exclude the row being replaced, including when the material/lot changes.
+      select
+        coalesce(sum(b.quantity), 0),
+        coalesce(bool_or(lower(trim(m.unit)) <> v_capacity_unit), false)
+        into v_other_quantity, v_incompatible_unit
+        from public.inventory_balances b
+        join public.materials m
+          on m.id = b.material_id
+         and m.org_id = b.org_id
+       where b.org_id = new.org_id
+         and b.location_id = new.location_id
+         and b.quantity > 0
+         and not (b.material_id = old.material_id and b.lot = old.lot);
+    else
+      select
+        coalesce(sum(b.quantity), 0),
+        coalesce(bool_or(lower(trim(m.unit)) <> v_capacity_unit), false)
+        into v_other_quantity, v_incompatible_unit
+        from public.inventory_balances b
+        join public.materials m
+          on m.id = b.material_id
+         and m.org_id = b.org_id
+       where b.org_id = new.org_id
+         and b.location_id = new.location_id
+         and b.quantity > 0;
+    end if;
+  else
     -- _apply_movement uses INSERT ... ON CONFLICT DO UPDATE. The BEFORE
     -- INSERT trigger must exclude the conflicting key because NEW.quantity
-    -- already represents the incoming delta, not the final accumulated row.
+    -- represents the incoming delta, not the final accumulated row.
     select
       coalesce(sum(b.quantity), 0),
       coalesce(bool_or(lower(trim(m.unit)) <> v_capacity_unit), false)
@@ -249,18 +276,6 @@ begin
        and b.location_id = new.location_id
        and b.quantity > 0
        and not (b.material_id = new.material_id and b.lot = new.lot);
-  else
-    select
-      coalesce(sum(b.quantity), 0),
-      coalesce(bool_or(lower(trim(m.unit)) <> v_capacity_unit), false)
-      into v_other_quantity, v_incompatible_unit
-      from public.inventory_balances b
-      join public.materials m
-        on m.id = b.material_id
-       and m.org_id = b.org_id
-     where b.org_id = new.org_id
-       and b.location_id = new.location_id
-       and b.quantity > 0;
   end if;
 
   if v_incompatible_unit then
