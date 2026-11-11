@@ -24,6 +24,7 @@ import {
   buildPickingSequence,
   recommendStorageLocations,
 } from "@/lib/warehouse-planning";
+import { buildCycleCountPlan, type CycleCountCandidate } from "@/lib/cycle-count-planning";
 import { startDemoSession, type DemoRole } from "@/integrations/supabase/admin-auth";
 import type { User } from "@supabase/supabase-js";
 
@@ -277,6 +278,8 @@ function Index() {
   const [mapWarehouseId, setMapWarehouseId] = useState("");
   const [mapSelectedLocationId, setMapSelectedLocationId] = useState("");
   const [selectedInventoryId, setSelectedInventoryId] = useState("");
+  const [cycleCountTarget, setCycleCountTarget] = useState<CycleCountCandidate | null>(null);
+  const [cycleCountLimit, setCycleCountLimit] = useState("20");
   const [inventoryForm, setInventoryForm] = useState({ warehouse_id: "todos", description: "" });
   const [attributeForm, setAttributeForm] = useState({ id: "", key: "", label: "", data_type: "text", required: false });
   const [attributeValues, setAttributeValues] = useState<Record<string, string>>({});
@@ -1316,6 +1319,21 @@ function Index() {
 
   const selectedInventory = inventorySessions.find((session) => session.id === selectedInventoryId);
   const selectedInventoryItems = counts.filter((item) => item.count_id === selectedInventoryId);
+  const cycleCountPlan = selectedInventory?.status === "em_andamento"
+    ? buildCycleCountPlan({
+        balances,
+        materials,
+        locations,
+        levels,
+        activeWarehouseIds,
+        movements,
+        sessions: inventorySessions,
+        countItems: counts,
+        currentSessionId: selectedInventory.id,
+        warehouseId: selectedInventory.warehouse_id,
+        limit: Number(cycleCountLimit),
+      })
+    : null;
 
   const inventorySection = <div className="space-y-5">
     <Panel title="Abrir inventário" description="Crie uma sessão de contagem para organizar as conferências. A última contagem concluída de cada material/endereço/lote substitui as anteriores na acuracidade, mantendo o histórico.">
@@ -1324,6 +1342,7 @@ function Index() {
         const {data,error}=await db.from("inventory_counts").insert(payload).select("*").single();
         if(error)throw error;
         setInventoryForm({warehouse_id:"todos",description:""});
+        setCycleCountTarget(null);
         setSelectedInventoryId(data.id);
       },"Sessão de inventário criada.");}}>
         <Field label="Descrição" value={inventoryForm.description} onChange={v=>setInventoryForm({...inventoryForm,description:v})} placeholder="Ex.: Contagem cíclica semanal"/>
@@ -1334,14 +1353,48 @@ function Index() {
 
     <Panel title="Sessões de inventário" description="Uma combinação de material, endereço e lote pode ser contada uma vez por sessão. Para corrigir uma divergência anterior, abra uma nova sessão e faça outra contagem.">
       <div className="grid gap-3 sm:grid-cols-2">
-        <SelectField label="Sessão selecionada" value={selectedInventoryId} onChange={setSelectedInventoryId} options={inventorySessions.map(session=>({value:session.id,label:`${new Date(session.created_at).toLocaleDateString("pt-BR")} · ${session.description||"Inventário"} · ${session.status==="concluido"?"Concluído":"Em andamento"}`}))}/>
+        <SelectField label="Sessão selecionada" value={selectedInventoryId} onChange={v=>{setSelectedInventoryId(v);setCycleCountTarget(null);}} options={inventorySessions.map(session=>({value:session.id,label:`${new Date(session.created_at).toLocaleDateString("pt-BR")} · ${session.description||"Inventário"} · ${session.status==="concluido"?"Concluído":"Em andamento"}`}))}/>
         {selectedInventory&&<div className="rounded-lg border bg-muted/30 p-3 text-sm"><p className="font-semibold">{selectedInventory.description||"Inventário"}</p><p className="mt-1 text-muted-foreground">{warehouses.find(w=>w.id===selectedInventory.warehouse_id)?.name??"Todos os armazéns"} · {selectedInventory.status==="concluido"?"Concluído":"Em andamento"}</p><p className="mt-1 text-xs text-muted-foreground">{selectedInventoryItems.length} contagem(ns) · {selectedInventoryItems.filter(item=>Number(item.difference)!==0).length} divergência(s)</p></div>}
       </div>
       {!inventorySessions.length?<Empty>Nenhum inventário registrado. Crie uma sessão acima para começar.</Empty>:null}
-      {selectedInventory&&selectedInventory.status==="em_andamento"&&canOperate&&<div className="mt-4 border-t pt-4"><h3 className="mb-3 text-sm font-semibold">Registrar contagem física</h3><AdjustmentForm countId={selectedInventory.id} warehouseId={selectedInventory.warehouse_id} orgId={orgId} materials={materials} balances={balances} locations={storageLocationOptions} saving={saving} onSave={runSave} onDone={refresh}/></div>}
+      {selectedInventory&&selectedInventory.status==="em_andamento"&&canOperate&&<div className="mt-4 border-t pt-4"><h3 className="mb-3 text-sm font-semibold">Registrar contagem física</h3><AdjustmentForm key={cycleCountTarget?.key ?? "manual"} initialTarget={cycleCountTarget} onTargetCompleted={()=>setCycleCountTarget(null)} countId={selectedInventory.id} warehouseId={selectedInventory.warehouse_id} orgId={orgId} materials={materials} balances={balances} locations={storageLocationOptions} saving={saving} onSave={runSave} onDone={refresh}/></div>}
       {selectedInventory&&selectedInventory.status==="concluido"&&<p className="mt-4 rounded-lg bg-muted p-3 text-sm text-muted-foreground">Esta sessão foi concluída e não aceita novas contagens.</p>}
       {selectedInventory&&selectedInventory.status==="em_andamento"&&canOperate&&(canManage||selectedInventory.created_by===user?.id)&&<div className="mt-4 flex justify-end"><button type="button" disabled={saving} onClick={()=>void runSave(async()=>{const {data,error}=await db.from("inventory_counts").update({status:"concluido",completed_at:new Date().toISOString()}).eq("id",selectedInventory.id).eq("org_id",orgId).eq("status","em_andamento").select("id").single();if(error||!data)throw error??new Error("Não foi possível concluir o inventário.");},"Inventário concluído. O histórico foi preservado.")} className="rounded-lg border border-primary/40 px-4 py-2 text-sm font-semibold text-primary disabled:opacity-50"><Check className="mr-2 inline h-4 w-4"/>Concluir inventário</button></div>}
     </Panel>
+
+    {selectedInventory&&selectedInventory.status==="em_andamento"&&canOperate&&cycleCountPlan&&<Panel title="Fila recomendada de contagem cíclica" description="O sistema prioriza posições nunca conferidas, contagens antigas e combinações com maior movimentação desde a última conferência. Selecione um item para preencher o formulário; a quantidade física continua sendo informada pelo operador.">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div className="text-sm text-muted-foreground">
+          <p><strong className="text-foreground">{cycleCountPlan.candidates.length}</strong> sugestão(ões) nesta página de <strong className="text-foreground">{cycleCountPlan.totalEligible - cycleCountPlan.alreadyCounted}</strong> combinação(ões) ainda não contadas nesta sessão.</p>
+          <p className="mt-1">Prioridade alta: {cycleCountPlan.priorityCounts.alta} · média: {cycleCountPlan.priorityCounts.media} · rotina: {cycleCountPlan.priorityCounts.rotina}</p>
+        </div>
+        <div className="w-full sm:w-44">
+          <SelectField label="Itens exibidos" value={cycleCountLimit} onChange={setCycleCountLimit} options={[{value:"10",label:"10 itens"},{value:"20",label:"20 itens"},{value:"50",label:"50 itens"},{value:"100",label:"100 itens"}]}/>
+        </div>
+      </div>
+      {!cycleCountPlan.candidates.length?<Empty>Não há saldos elegíveis pendentes para esta sessão. Confira se o armazém possui saldos em posições finais ativas.</Empty>:<div className="mt-4 grid gap-3 lg:grid-cols-2">
+        {cycleCountPlan.candidates.map((target,index)=>{
+          const selected=cycleCountTarget?.key===target.key;
+          const priorityLabel=target.priority==="alta"?"Prioridade alta":target.priority==="media"?"Prioridade média":"Contagem de rotina";
+          const priorityClass=target.priority==="alta"?"border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200":target.priority==="media"?"border-sky-200 bg-sky-50 text-sky-900 dark:border-sky-900 dark:bg-sky-950/30 dark:text-sky-200":"border-border bg-muted/40 text-muted-foreground";
+          return <article key={target.key} className="min-w-0 rounded-lg border p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">#{index+1} · {target.materialCode}</p>
+              <span className={`rounded-full border px-2 py-1 text-xs font-medium ${priorityClass}`}>{priorityLabel}</span>
+            </div>
+            <p className="mt-2 break-words text-sm font-semibold">{target.materialDescription}</p>
+            <p className="mt-1 text-sm">{target.locationCode} · Lote: {target.lot||"sem identificação"} · {target.unit}</p>
+            <p className="mt-2 text-xs text-muted-foreground">{target.reason}</p>
+            <div className="mt-3 flex justify-end">
+              <button type="button" disabled={saving} onClick={()=>setCycleCountTarget(target)} className={`rounded-lg px-3 py-2 text-xs font-semibold ${selected?"bg-primary/10 text-primary":"border border-primary/40 text-primary hover:bg-primary/5"} disabled:opacity-50`}>
+                {selected?"Selecionado para contagem":"Contar este item"}
+              </button>
+            </div>
+          </article>;
+        })}
+      </div>}
+      <p className="mt-3 text-xs text-muted-foreground">A prioridade é uma heurística operacional baseada em recência e frequência de movimentações. Não representa classificação ABC por valor financeiro nem substitui a definição de periodicidade da empresa. A fila não reserva estoque nem altera saldos até a contagem ser registrada.</p>
+    </Panel>}
 
     {selectedInventory&&<Panel title="Contagens registradas" description="O saldo esperado, a quantidade contada e a diferença ficam vinculados à sessão.">
       <Table headers={["Material","Endereço","Lote","Esperado","Contado","Diferença","Motivo","Data"]} rows={selectedInventoryItems.map(item=>[pretty(materials.find(m=>m.id===item.material_id)?.code),pretty(locations.find(l=>l.id===item.location_id)?.code),pretty(item.lot),item.expected_qty,item.counted_qty,<span className={Number(item.difference)===0?"text-emerald-700":"font-semibold text-amber-700"}>{item.difference}</span>,pretty(item.reason),new Date(item.created_at).toLocaleString("pt-BR")])}/>
@@ -1764,12 +1817,40 @@ function Index() {
   </div>;
 }
 
-function AdjustmentForm({ orgId, materials, balances, locations, saving, onSave, onDone, countId, warehouseId }: {
+function AdjustmentForm({ orgId, materials, balances, locations, saving, onSave, onDone, countId, warehouseId, initialTarget, onTargetCompleted }: {
   orgId: string; materials: AnyRow[]; balances: AnyRow[]; locations: AnyRow[]; saving: boolean;
   onSave: (fn:()=>Promise<unknown>, success:string)=>Promise<void>; onDone:()=>void;
   countId?: string; warehouseId?: string | null;
+  initialTarget?: CycleCountCandidate | null;
+  onTargetCompleted?: () => void;
 }) {
-  const [form,setForm]=useState({material_id:"",location_id:"",lot:"",counted:"0",reason:""});
+  const [form,setForm]=useState(()=>({
+    material_id:initialTarget?.materialId??"",
+    location_id:initialTarget?.locationId??"",
+    lot:initialTarget?.lot??"",
+    counted:initialTarget?"":"0",
+    reason:initialTarget?"Contagem cíclica priorizada":"",
+  }));
   const requiresLot = Boolean(materials.find((material)=>material.id===form.material_id)?.tracks_lot) && !balances.some((balance)=>balance.material_id===form.material_id&&balance.location_id===form.location_id&&!String(balance.lot??"").trim()&&Number(balance.quantity)>0);
-  return <form className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3" onSubmit={e=>{e.preventDefault();void onSave(async()=>{if(!form.material_id||!form.location_id)throw new Error("Selecione material e endereço.");if(requiresLot&&!form.lot.trim())throw new Error("Este material exige identificação de lote.");if(!form.reason.trim())throw new Error("Informe o motivo do ajuste.");const counted=Number(form.counted);if(!Number.isFinite(counted)||counted<0)throw new Error("A contagem precisa ser zero ou maior.");const rpcArgs={_material:form.material_id,_location:form.location_id,_lot:form.lot||"",_counted:counted,_reason:form.reason.trim(),_org:orgId,...(countId?{_count:countId}:{})};const {error}=await db.rpc("register_adjustment",rpcArgs);if(error)throw error;setForm({material_id:"",location_id:"",lot:"",counted:"0",reason:""});onDone();},"Ajuste de inventário registrado.");}}><SelectField label="Material" value={form.material_id} onChange={v=>setForm({...form,material_id:v})} required options={materials.filter(m=>m.status==="ativo"||m.status==="active").map(m=>({value:m.id,label:`${m.code} — ${m.description}`}))}/><SelectField label="Endereço" value={form.location_id} onChange={v=>setForm({...form,location_id:v})} required options={locations.filter(l=>l.active&&l.status!=="bloqueado"&&(!warehouseId||l.warehouse_id===warehouseId)).map(l=>({value:l.id,label:`${l.code} — ${l.name}`}))}/><Field label="Lote" value={form.lot} onChange={v=>setForm({...form,lot:v})} required={requiresLot}/><Field label="Quantidade contada" type="number" min={0} step={0.01} value={form.counted} onChange={v=>setForm({...form,counted:v})} required/><Field label="Motivo obrigatório" value={form.reason} onChange={v=>setForm({...form,reason:v})} required/><div className="flex items-end"><button disabled={saving} className="h-10 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground">Registrar ajuste</button></div></form>;
+  return <form className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3" onSubmit={e=>{e.preventDefault();void onSave(async()=>{
+    if(!form.material_id||!form.location_id)throw new Error("Selecione material e endereço.");
+    if(requiresLot&&!form.lot.trim())throw new Error("Este material exige identificação de lote.");
+    if(!form.reason.trim())throw new Error("Informe o motivo do ajuste.");
+    if(!form.counted.trim())throw new Error("Informe a quantidade física contada; use zero quando não houver saldo.");
+    const counted=Number(form.counted);
+    if(!Number.isFinite(counted)||counted<0)throw new Error("A contagem precisa ser zero ou maior.");
+    const rpcArgs={_material:form.material_id,_location:form.location_id,_lot:form.lot||"",_counted:counted,_reason:form.reason.trim(),_org:orgId,...(countId?{_count:countId}:{})};
+    const {error}=await db.rpc("register_adjustment",rpcArgs);
+    if(error)throw error;
+    setForm({material_id:"",location_id:"",lot:"",counted:"0",reason:""});
+    onTargetCompleted?.();
+    onDone();
+  },"Ajuste de inventário registrado.");}}>
+    <SelectField label="Material" value={form.material_id} onChange={v=>setForm({...form,material_id:v})} required options={materials.filter(m=>m.status==="ativo"||m.status==="active").map(m=>({value:m.id,label:`${m.code} — ${m.description}`}))}/>
+    <SelectField label="Endereço" value={form.location_id} onChange={v=>setForm({...form,location_id:v})} required options={locations.filter(l=>l.active&&(l.status!=="bloqueado"||l.id===initialTarget?.locationId)&&(!warehouseId||l.warehouse_id===warehouseId)).map(l=>({value:l.id,label:`${l.code} — ${l.name}`}))}/>
+    <Field label="Lote" value={form.lot} onChange={v=>setForm({...form,lot:v})} required={requiresLot}/>
+    <Field label="Quantidade contada" type="number" min={0} step={0.01} value={form.counted} onChange={v=>setForm({...form,counted:v})} required/>
+    <Field label="Motivo obrigatório" value={form.reason} onChange={v=>setForm({...form,reason:v})} required/>
+    <div className="flex items-end"><button disabled={saving} className="h-10 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground">Registrar ajuste</button></div>
+  </form>;
 }

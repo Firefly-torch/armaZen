@@ -79,6 +79,22 @@ A migração bloqueia novas entradas, transferências de entrada e ajustes em en
 
 O indicador do dashboard usa somente a contagem concluída mais recente de cada combinação material/endereço/lote dentro do período selecionado. Uma nova contagem concluída substitui a anterior para o cálculo atual, inclusive quando corrige uma divergência. As linhas antigas continuam preservadas no histórico para auditoria. Sessões em andamento não entram no indicador. Uma contagem válida demonstra apenas as combinações efetivamente contadas; não representa automaticamente uma auditoria integral de todo o armazém.
 
+### Fila priorizada de contagem cíclica
+
+Na sessão em andamento, a tela de Inventário pode apresentar uma fila sugerida de combinações material/endereço/lote com saldo positivo. A classificação utiliza três sinais observáveis:
+
+- Combinações sem contagem em sessão concluída recebem prioridade alta.
+- Quanto maior o tempo desde a última contagem concluída, maior a prioridade.
+- Movimentações do mesmo material e lote na posição, posteriores à última contagem (ou nos últimos 90 dias quando nunca houve contagem), elevam a prioridade.
+
+A classificação é operacional e heurística. Não é uma curva ABC por valor financeiro, pois o protótipo não dispõe de custo ou consumo monetário validado. Os limites de 30 e 90 dias e de 4 e 10 movimentações servem apenas para agrupar a fila em prioridade de rotina, média ou alta; a empresa deve definir a periodicidade formal conforme seu risco e processo.
+
+A fila considera somente saldos positivos de materiais ativos em posições finais ativas de armazéns ativos. Posições reservadas e bloqueadas continuam elegíveis para contagem física, pois o bloqueio impede novas alocações, mas não elimina a necessidade de verificar o saldo existente. Endereços-pai, posições inativas, armazéns inativos, materiais inativos e saldos zerados não entram na fila.
+
+Ao selecionar uma sugestão, o sistema preenche material, endereço e lote no formulário existente. A quantidade física é informada pelo operador; a fila não revela a quantidade esperada na tarjeta, não reserva materiais e não altera o saldo por si só. Após a gravação, o item sai da fila da sessão atual e o procedimento existente de ajuste registra diferença, responsável e histórico pela função transacional do banco. Uma combinação já contada na sessão atual não é sugerida novamente.
+
+A fila é recalculada com os registros carregados pela aplicação e herda o limite atual de consulta de até 1.000 registros. Não há calendário automático, geração automática de tarefas nem agendamento recorrente nesta etapa. A conclusão da sessão continua sendo manual.
+
 No ambiente demonstrativo, a sessão é preparada pelo serviço de provisionamento sempre que um dos perfis de demonstração inicia uma sessão, usando o identificador imutável do ambiente. A conferência fictícia tem 40 linhas, das quais 39 sem divergência (97,5%). Esse exemplo serve para demonstrar o KPI e a regra de recontagem; não representa uma contagem física real e não é aplicado às organizações operacionais.
 
 ## Conferência e reconstrução de saldos
