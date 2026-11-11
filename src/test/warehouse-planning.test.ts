@@ -310,6 +310,25 @@ describe("buildPickingSequence", () => {
     ]);
   });
 
+  it("keeps an operator-selected picking location and lot at the top of the refreshed preview", () => {
+    const sequence = buildPickingSequence({
+      materialId: "mat-a",
+      requestedQuantity: 1,
+      locations,
+      levels,
+      balances: pickingBalances,
+      warehouses,
+      preferredLocationId: "slot-10",
+      preferredLot: "L-03",
+    });
+
+    expect(sequence.steps[0]).toMatchObject({
+      locationId: "slot-10",
+      lot: "L-03",
+      quantityToPick: 1,
+    });
+  });
+
   it("does not plan more than available stock and reports the shortage", () => {
     const sequence = buildPickingSequence({
       materialId: "mat-a",
