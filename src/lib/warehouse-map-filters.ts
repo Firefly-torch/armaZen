@@ -37,10 +37,10 @@ export function buildWarehouseHierarchyFilterSteps(
     childrenByParent.set(location.parent_id, siblings);
   }
 
-  const levelNames = new Map(
+  const levelNames = new Map<string, string>(
     [...levels]
       .sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name, "pt-BR"))
-      .map((level) => [level.id, level.name]),
+      .map((level) => [level.id, level.name] as const),
   );
   const sortByCode = (a: HierarchyFilterLocation, b: HierarchyFilterLocation) =>
     a.code.localeCompare(b.code, "pt-BR", { numeric: true }) ||
