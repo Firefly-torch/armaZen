@@ -270,8 +270,19 @@ export function buildPickingSequence(options: {
   levels: PlanningLevel[];
   balances: PlanningBalance[];
   warehouses: PlanningWarehouse[];
+  preferredLocationId?: string;
+  preferredLot?: string;
 }): PickingSequence {
-  const { materialId, requestedQuantity, locations, levels, balances, warehouses } = options;
+  const {
+    materialId,
+    requestedQuantity,
+    locations,
+    levels,
+    balances,
+    warehouses,
+    preferredLocationId,
+    preferredLot,
+  } = options;
   const requested = Number.isFinite(requestedQuantity) && requestedQuantity > 0
     ? requestedQuantity
     : 0;
@@ -294,6 +305,17 @@ export function buildPickingSequence(options: {
       );
     })
     .sort((left, right) => {
+      const leftIsPreferredLocation = Boolean(preferredLocationId && left.location_id === preferredLocationId);
+      const rightIsPreferredLocation = Boolean(preferredLocationId && right.location_id === preferredLocationId);
+      const leftIsPreferredLot = Boolean(
+        leftIsPreferredLocation && preferredLot !== undefined && String(left.lot ?? "") === preferredLot,
+      );
+      const rightIsPreferredLot = Boolean(
+        rightIsPreferredLocation && preferredLot !== undefined && String(right.lot ?? "") === preferredLot,
+      );
+      if (leftIsPreferredLot !== rightIsPreferredLot) return leftIsPreferredLot ? -1 : 1;
+      if (leftIsPreferredLocation !== rightIsPreferredLocation) return leftIsPreferredLocation ? -1 : 1;
+
       const leftLocation = locationsById.get(left.location_id)!;
       const rightLocation = locationsById.get(right.location_id)!;
       const leftWarehouse = warehousesById.get(leftLocation.warehouse_id)?.name ?? "";
