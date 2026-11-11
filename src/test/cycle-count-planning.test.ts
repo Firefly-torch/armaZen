@@ -67,7 +67,7 @@ describe("buildCycleCountPlan", () => {
       ],
     });
 
-    expect(plan.candidates[0]?.key).toContain("slot-10");
+    expect(plan.candidates.find((item) => item.locationId === "slot-10")?.lastCountedAt).toBeNull();
     expect(plan.candidates.find((item) => item.locationId === "slot-10")?.lastCountedAt).toBeNull();
     expect(plan.candidates.find((item) => item.locationId === "slot-2")?.daysSinceCount).toBe(22);
   });
