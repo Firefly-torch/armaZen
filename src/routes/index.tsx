@@ -35,7 +35,11 @@ import {
   type ExportDataset,
   type ExportReferenceMaps,
 } from "@/lib/export-planning";
-import { startDemoSession, type DemoRole } from "@/integrations/supabase/admin-auth";
+import {
+  restoreDemoSession as restoreDemoSessionAction,
+  startDemoSession,
+  type DemoRole,
+} from "@/integrations/supabase/admin-auth";
 import type { User } from "@supabase/supabase-js";
 
 export const Route = createFileRoute("/")({
@@ -77,6 +81,12 @@ const reservedDemoEmails = new Set([
   "demo.operacao@armazen.app",
   "demo.gestao@armazen.app",
 ]);
+const DEMO_SESSION_STORAGE_KEY = "armaZen:demo-session-token";
+const isDemoAccountEmail = (email: unknown) => {
+  const value = String(email ?? "").trim().toLowerCase();
+  return reservedDemoEmails.has(value) ||
+    /^demo\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(consulta|operacao|gestao)@armazen\.app$/.test(value);
+};
 const locationStatuses = ["disponivel", "bloqueado", "reservado"];
 const datasets: Record<string, { label: string; table: string; fields: string[] }> = {
   materials: { label: "Materiais", table: "materials", fields: ["code", "description", "category", "unit", "barcode", "min_stock", "status", "tracks_lot", "created_at"] },
@@ -182,10 +192,21 @@ function buildExportBlob(
   return { blob: new Blob(["\ufeff", csv], { type: "text/csv;charset=utf-8" }), extension: "csv" };
 }
 
-// Demo access is passwordless for three reserved, fictitious role accounts.
+// Every browser tab keeps a private session token for its own temporary workspace.
 function LoginScreen({ onLogin }: { onLogin: () => void }) {
   const [busyRole, setBusyRole] = useState<DemoRole | null>(null);
+  const [restoreBusy, setRestoreBusy] = useState(false);
+  const [sessionToken, setSessionToken] = useState("");
+  const [restoreMessage, setRestoreMessage] = useState("");
   const [err, setErr] = useState("");
+
+  useEffect(() => {
+    try {
+      setSessionToken(window.sessionStorage.getItem(DEMO_SESSION_STORAGE_KEY) ?? "");
+    } catch {
+      setSessionToken("");
+    }
+  }, []);
 
   const profiles: { role: DemoRole; title: string; description: string; actions: string; Icon: typeof Warehouse }[] = [
     { role: "consulta", title: "Consulta", description: "Visualize indicadores, materiais, saldos, endereços, movimentações e tarefas.", actions: "Acesso somente para leitura", Icon: Search },
@@ -196,10 +217,20 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
   const handleDemoLogin = async (role: DemoRole) => {
     setBusyRole(role);
     setErr("");
+    setRestoreMessage("");
     try {
-      const result = await startDemoSession({ data: { role } });
+      const storedToken = sessionToken || window.sessionStorage.getItem(DEMO_SESSION_STORAGE_KEY) || undefined;
+      const result = await startDemoSession({
+        data: { role, ...(storedToken ? { sessionToken: storedToken } : {}) },
+      });
+
+      // Store the workspace token before authentication. If OTP verification
+      // fails, the visitor can retry or restore this same isolated workspace.
+      window.sessionStorage.setItem(DEMO_SESSION_STORAGE_KEY, result.sessionToken);
+      setSessionToken(result.sessionToken);
+
       const { error } = await supabase.auth.verifyOtp({
-        token_hash: result.tokenHash,
+        token_hash: result.authTokenHash,
         type: "magiclink",
       });
       if (error) throw error;
@@ -208,6 +239,30 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
       setErr(errorMessage(e));
     } finally {
       setBusyRole(null);
+    }
+  };
+
+  const handleRestoreDemo = async () => {
+    if (!sessionToken) return;
+    setRestoreBusy(true);
+    setErr("");
+    setRestoreMessage("");
+    try {
+      const result = await restoreDemoSessionAction({ data: { sessionToken } });
+      const expiry = new Date(result.expiresAt).toLocaleTimeString("pt-BR", {
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+      setRestoreMessage(`Dados iniciais restaurados. Este ambiente permanece disponível até ${expiry}.`);
+    } catch (e) {
+      const message = errorMessage(e);
+      setErr(message);
+      if (/expirou|não existe|token.*inválido|não há um ambiente/i.test(message)) {
+        try { window.sessionStorage.removeItem(DEMO_SESSION_STORAGE_KEY); } catch { /* storage may be blocked */ }
+        setSessionToken("");
+      }
+    } finally {
+      setRestoreBusy(false);
     }
   };
 
@@ -226,7 +281,7 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
           </div>
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">Ambiente de demonstração</p>
           <h1 className="sr-only">armaZen</h1>
-          <p className="mx-auto mt-2 max-w-xl text-sm text-muted-foreground">Explore o sistema com três perfis prontos. Cada acesso usa uma conta própria e permissões correspondentes à rotina demonstrada.</p>
+          <p className="mx-auto mt-2 max-w-xl text-sm text-muted-foreground">Explore o sistema com três perfis prontos. Cada aba cria seu próprio ambiente e mantém os testes separados dos demais visitantes.</p>
         </div>
         {err && <div role="alert" className="mx-auto mb-5 max-w-3xl rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">{err}</div>}
         <div className="grid gap-4 md:grid-cols-3">
@@ -240,7 +295,26 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
             </button>
           </article>)}
         </div>
-        <p className="mt-6 text-center text-xs text-muted-foreground">As contas utilizam dados fictícios compartilhados entre os perfis. Não insira informações reais neste ambiente.</p>
+        <section className="mx-auto mt-6 flex max-w-3xl flex-col gap-3 rounded-xl border bg-card p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <h2 className="text-sm font-semibold">Restaurar ambiente de demonstração</h2>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">
+              {sessionToken
+                ? "Apaga somente as alterações feitas nesta aba e recupera os dados fictícios iniciais."
+                : "Entre em um perfil para criar seu ambiente individual. Depois, volte a esta tela para restaurá-lo."}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => void handleRestoreDemo()}
+            disabled={!sessionToken || restoreBusy || busyRole !== null}
+            className="h-10 shrink-0 rounded-lg border border-primary/30 px-4 text-sm font-semibold text-primary transition-colors hover:bg-primary/5 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {restoreBusy ? "Restaurando…" : "Restaurar dados iniciais"}
+          </button>
+        </section>
+        {restoreMessage && <p role="status" className="mx-auto mt-3 max-w-3xl rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3 text-sm text-emerald-700 dark:text-emerald-300">{restoreMessage}</p>}
+        <p className="mt-6 text-center text-xs text-muted-foreground">Cada ambiente dura uma hora e é removido automaticamente. Os dados de demonstração são fictícios; não insira informações reais.</p>
         <p className="mt-2 text-center text-xs text-muted-foreground">Protótipo acadêmico · armaZen</p>
       </div>
     </div>
@@ -570,8 +644,8 @@ function Index() {
 
   const canOperate = Boolean(user && orgId && role !== "consulta");
   const canManage = role === "gestao";
-  const isDemoWorkspace = members.some((member) =>
-    reservedDemoEmails.has(String(member.profiles?.email ?? "").toLowerCase())
+  const isDemoWorkspace = Boolean(user?.app_metadata?.armaZenDemoSessionId) || members.some((member) =>
+    isDemoAccountEmail(member.profiles?.email)
   );
   const visibleNav = nav.filter((item) => {
     if (canManage) return true;
@@ -2309,7 +2383,7 @@ function Index() {
       {canManage&&!isDemoWorkspace&&<form className="mb-5 grid gap-3 sm:grid-cols-3" onSubmit={e=>{e.preventDefault();void runSave(async()=>{const {error}=await db.rpc("add_member_by_email",{_email:memberForm.email.trim(),_org:orgId,_role:memberForm.role});if(error)throw error;setMemberForm({email:"",role:"operacao"});},"Solicitação de associação concluída.");}}><Field label="E-mail do usuário existente" value={memberForm.email} onChange={v=>setMemberForm({...memberForm,email:v})} required/><SelectField label="Papel" value={memberForm.role} onChange={v=>setMemberForm({...memberForm,role:v})} options={[{value:"consulta",label:"Consulta"},{value:"operacao",label:"Operação"},{value:"gestao",label:"Gestão"}]} required/><div className="flex items-end"><button disabled={saving} className="h-10 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground"><Users className="mr-2 inline h-4 w-4"/>Associar usuário</button></div></form>}
       {canManage&&isDemoWorkspace&&<p className="mb-4 rounded-lg border border-primary/20 bg-primary/5 p-3 text-sm text-muted-foreground">Este ambiente é uma demonstração pública. A equipe é fixa nos três perfis pré-configurados; contas externas não podem ser associadas.</p>}
       {!canManage&&<p className="mb-4 text-sm text-muted-foreground">A associação de usuários está disponível apenas para o perfil Gestão.</p>}
-      <Table headers={["Nome","E-mail","Papel","Desde","Ações"]} rows={members.map(m=>[pretty(m.profiles?.full_name),pretty(m.profiles?.email),statusPill(m.role),dateLabel(m.created_at),m.user_id===user?.id?"Sessão atual":reservedDemoEmails.has(String(m.profiles?.email??"").toLowerCase())?<span className="rounded-md bg-primary/10 px-2 py-1 text-xs font-medium text-primary">Perfil de demonstração · fixo</span>:<div className="flex flex-wrap items-center gap-2"><select aria-label={`Papel de ${m.profiles?.email??m.user_id}`} className="h-9 max-w-32 rounded-md border bg-background px-2 text-xs" value={m.role} onChange={event=>{const nextRole=event.target.value;if(nextRole===m.role)return;if(!window.confirm(`Alterar o perfil deste membro para ${nextRole}?`))return;void runSave(async()=>{const {error}=await db.rpc("set_member_role",{_member:m.id,_role:nextRole});if(error)throw error;},"Perfil do membro atualizado.");}}><option value="consulta">Consulta</option><option value="operacao">Operação</option><option value="gestao">Gestão</option></select><button type="button" title="Remover membro" className="rounded-md border px-2 py-2 text-xs hover:bg-destructive/5" onClick={()=>{if(!window.confirm(`Remover ${m.profiles?.email??"este membro"} da organização?`))return;void runSave(async()=>{const {error}=await db.rpc("remove_member",{_member:m.id});if(error)throw error;},"Membro removido.");}}><Ban className="h-3.5 w-3.5"/></button></div>])}/>
+      <Table headers={["Nome","E-mail","Papel","Desde","Ações"]} rows={members.map(m=>[pretty(m.profiles?.full_name),pretty(m.profiles?.email),statusPill(m.role),dateLabel(m.created_at),m.user_id===user?.id?"Sessão atual":isDemoAccountEmail(m.profiles?.email)?<span className="rounded-md bg-primary/10 px-2 py-1 text-xs font-medium text-primary">Perfil de demonstração · fixo</span>:<div className="flex flex-wrap items-center gap-2"><select aria-label={`Papel de ${m.profiles?.email??m.user_id}`} className="h-9 max-w-32 rounded-md border bg-background px-2 text-xs" value={m.role} onChange={event=>{const nextRole=event.target.value;if(nextRole===m.role)return;if(!window.confirm(`Alterar o perfil deste membro para ${nextRole}?`))return;void runSave(async()=>{const {error}=await db.rpc("set_member_role",{_member:m.id,_role:nextRole});if(error)throw error;},"Perfil do membro atualizado.");}}><option value="consulta">Consulta</option><option value="operacao">Operação</option><option value="gestao">Gestão</option></select><button type="button" title="Remover membro" className="rounded-md border px-2 py-2 text-xs hover:bg-destructive/5" onClick={()=>{if(!window.confirm(`Remover ${m.profiles?.email??"este membro"} da organização?`))return;void runSave(async()=>{const {error}=await db.rpc("remove_member",{_member:m.id});if(error)throw error;},"Membro removido.");}}><Ban className="h-3.5 w-3.5"/></button></div>])}/>
     </Panel>
     <Panel title="Campos adicionais de materiais" description="Configure informações que aparecem no cadastro de materiais sem exigir edição do código.">
       <form className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4" onSubmit={e=>{e.preventDefault();void runSave(async()=>{
@@ -2359,7 +2433,7 @@ function Index() {
             <p className="break-words text-sm font-medium [overflow-wrap:anywhere]">{orgName||"Organização não identificada"}</p>
             <p className="text-xs text-muted-foreground">{roleLabel}</p>
           </div>
-          <button onClick={()=>void supabase.auth.signOut()} className="h-9 shrink-0 rounded-lg border px-3 text-xs font-medium text-muted-foreground hover:bg-muted" title="Sair">Sair</button>
+          <button onClick={()=>void supabase.auth.signOut()} className="h-9 shrink-0 rounded-lg border px-3 text-xs font-medium text-muted-foreground hover:bg-muted" title="Sair e trocar perfil">Trocar perfil</button>
         </div>
       </header>
       <div className="min-w-0 w-full max-w-full space-y-4 px-3 py-4 sm:p-8">

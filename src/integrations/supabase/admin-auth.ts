@@ -1,249 +1,276 @@
-// Server-only demo session provisioning. The browser cannot choose arbitrary
-// emails or passwords, and this endpoint can only issue sessions for the three
-// reserved, fictitious demonstration profiles.
+// Server-only provisioning for isolated, one-hour demo workspaces.
+import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
 import { createServerFn } from "@tanstack/react-start";
+import { getRequest } from "@tanstack/react-start/server";
 import type { User } from "@supabase/supabase-js";
 import { createSupabaseAdminClient } from "./client.server";
+import { serverRuntimeEnv } from "@/lib/runtime-env.server";
 
 export type DemoRole = "consulta" | "operacao" | "gestao";
 
-const DEMO_PROFILES: Record<DemoRole, { email: string; name: string }> = {
-  consulta: { email: "demo.consulta@armazen.app", name: "Demonstração — Consulta" },
-  operacao: { email: "demo.operacao@armazen.app", name: "Demonstração — Operação" },
-  gestao: { email: "demo.gestao@armazen.app", name: "Demonstração — Gestão" },
+const DEMO_ROLES: DemoRole[] = ["consulta", "operacao", "gestao"];
+const ROLE_LABELS: Record<DemoRole, string> = {
+  consulta: "Consulta",
+  operacao: "Operação",
+  gestao: "Gestão",
+};
+const SESSION_TOKEN_PATTERN = /^[a-f0-9]{64}$/;
+
+type DemoSessionRow = {
+  session_id: string;
+  consulta_user_id: string;
+  operacao_user_id: string;
+  gestao_user_id: string;
+  expires_at: string;
 };
 
 function isDemoRole(value: unknown): value is DemoRole {
   return value === "consulta" || value === "operacao" || value === "gestao";
 }
 
-// Two UUIDs without separators provide 64 random characters, within Supabase's
-// 72-character password limit. These passwords remain unknown to demo visitors;
-// public demo access is provided through one-time magic links.
 function generateDemoPassword(): string {
-  return `${crypto.randomUUID().replaceAll("-", "")}${crypto.randomUUID().replaceAll("-", "")}`;
+  return randomBytes(36).toString("base64url");
 }
 
-/**
- * Log only the diagnostic fields needed to debug Supabase Auth. Never log
- * request headers, API keys, passwords, access tokens, or generated links.
- */
-function logAuthFailure(
-  operation: string,
-  role: DemoRole,
-  email: string,
-  error: unknown,
-) {
+function generateSessionToken(): string {
+  return randomBytes(32).toString("hex");
+}
+
+function hashSessionToken(token: string): string {
+  return createHash("sha256").update(token, "utf8").digest("hex");
+}
+
+function getRequestIp(): string | null {
+  try {
+    const request = getRequest();
+    // Use platform-generated headers only; do not trust arbitrary x-forwarded-for.
+    const raw =
+      request.headers.get("x-vercel-forwarded-for") ??
+      request.headers.get("cf-connecting-ip");
+    const address = raw?.split(",")[0]?.trim();
+    return address && address.length <= 128 ? address : null;
+  } catch {
+    return null;
+  }
+}
+
+async function getClientHash(): Promise<string | null> {
+  const ip = getRequestIp();
+  if (!ip) return null;
+
+  const secret = await serverRuntimeEnv("SUPABASE_SERVICE_ROLE_KEY");
+  if (!secret) return null;
+
+  // Store a keyed digest, never the visitor's raw network address.
+  return createHmac("sha256", secret).update(ip, "utf8").digest("hex");
+}
+
+function roleEmail(sessionId: string, role: DemoRole): string {
+  return `demo.${sessionId}.${role}@armazen.app`;
+}
+
+function logDemoFailure(operation: string, role: DemoRole | undefined, error: unknown) {
   const details =
     error && typeof error === "object"
-      ? (error as {
-          name?: unknown;
-          message?: unknown;
-          status?: unknown;
-          statusCode?: unknown;
-          code?: unknown;
-        })
+      ? (error as { name?: unknown; message?: unknown; status?: unknown; code?: unknown })
       : { message: error };
 
-  console.error("[Demo] Supabase Auth operation failed", {
+  console.error("[Demo] Isolated workspace operation failed", {
     operation,
     role,
-    email,
     name: typeof details.name === "string" ? details.name : undefined,
     status:
       typeof details.status === "number" || typeof details.status === "string"
         ? details.status
-        : typeof details.statusCode === "number" || typeof details.statusCode === "string"
-          ? details.statusCode
-          : undefined,
+        : undefined,
     code: typeof details.code === "string" ? details.code : undefined,
-    message:
-      typeof details.message === "string"
-        ? details.message.slice(0, 500)
-        : String(details.message ?? "Unknown error").slice(0, 500),
+    message: String(details.message ?? "Unknown error").slice(0, 400),
   });
 }
 
-async function findUserByEmail(
-  supabaseAdmin: Awaited<ReturnType<typeof createSupabaseAdminClient>>,
-  email: string,
-  role: DemoRole,
-) {
-  const pageSize = 1000;
-  for (let page = 1; page <= 50; page += 1) {
-    const { data, error } = await supabaseAdmin.auth.admin.listUsers({
-      page,
-      perPage: pageSize,
-    });
-    if (error) {
-      logAuthFailure("listUsers", role, email, error);
-      throw new Error(
-        "Não foi possível verificar a conta de demonstração. Consulte os logs do servidor.",
-      );
-    }
-    const user = data.users.find((item) => item.email?.toLowerCase() === email.toLowerCase());
-    if (user) return user;
-    if (data.users.length < pageSize) return null;
-  }
-  throw new Error("Não foi possível localizar a conta reservada para demonstração.");
-}
+async function findActiveSession(
+  admin: Awaited<ReturnType<typeof createSupabaseAdminClient>>,
+  tokenHash: string,
+): Promise<DemoSessionRow | null> {
+  const { data, error } = await (admin as any)
+    .from("demo_visitor_sessions")
+    .select("session_id, consulta_user_id, operacao_user_id, gestao_user_id, expires_at")
+    .eq("token_hash", tokenHash)
+    .maybeSingle();
 
-async function prepareExistingDemoUser(
-  supabaseAdmin: Awaited<ReturnType<typeof createSupabaseAdminClient>>,
-  role: DemoRole,
-  existing: User,
-) {
-  const profile = DEMO_PROFILES[role];
-  const existingRole = existing.app_metadata?.armaZenDemoRole;
-
-  if (existingRole === role) return existing;
-  if (existingRole !== undefined && existingRole !== null && existingRole !== "") {
+  if (error) {
+    logDemoFailure("findActiveSession", undefined, error);
     throw new Error(
-      `O e-mail reservado para demonstração está marcado com outro perfil. Revise a conta ${profile.email} no Supabase Auth.`,
+      "Não foi possível verificar a sessão de demonstração. Confirme se a migração de ambientes isolados foi aplicada.",
     );
   }
 
-  // These addresses are hard-coded, reserved demo identities (never caller
-  // supplied). If one was created manually, finish the same provisioning
-  // safely: mark its role, confirm it and replace any manually chosen password
-  // with an unknown random password. Demo entry uses a one-time magic link.
-  const { data, error } = await supabaseAdmin.auth.admin.updateUserById(existing.id, {
+  if (!data || Date.parse(data.expires_at) <= Date.now()) return null;
+  return data as DemoSessionRow;
+}
+
+async function createVisitorUser(
+  admin: Awaited<ReturnType<typeof createSupabaseAdminClient>>,
+  sessionId: string,
+  role: DemoRole,
+): Promise<User> {
+  const email = roleEmail(sessionId, role);
+  const { data, error } = await admin.auth.admin.createUser({
+    email,
+    password: generateDemoPassword(),
+    email_confirm: true,
     app_metadata: {
-      ...(existing.app_metadata ?? {}),
       armaZenDemoRole: role,
+      armaZenDemoSessionId: sessionId,
     },
     user_metadata: {
-      ...(existing.user_metadata ?? {}),
-      full_name: profile.name,
+      full_name: `Demonstração — ${ROLE_LABELS[role]}`,
     },
-    email_confirm: true,
-    password: generateDemoPassword(),
   });
 
   if (error || !data.user) {
-    logAuthFailure(
-      "updateUserById",
-      role,
-      profile.email,
-      error ?? new Error("Supabase returned no user"),
-    );
-    throw new Error(
-      "Não foi possível regularizar a conta reservada para demonstração. Consulte os logs do servidor.",
-    );
+    logDemoFailure("createUser", role, error ?? new Error("Supabase did not return a user"));
+    throw new Error("Não foi possível preparar um dos perfis demonstrativos. Tente novamente.");
   }
 
   return data.user;
 }
 
-async function ensureDemoUser(
-  supabaseAdmin: Awaited<ReturnType<typeof createSupabaseAdminClient>>,
-  role: DemoRole,
-) {
-  const profile = DEMO_PROFILES[role];
-  const { data, error } = await supabaseAdmin.auth.admin.createUser({
-    email: profile.email,
-    password: generateDemoPassword(),
-    email_confirm: true,
-    app_metadata: { armaZenDemoRole: role },
-    user_metadata: { full_name: profile.name },
-  });
+async function provisionVisitorSession(
+  admin: Awaited<ReturnType<typeof createSupabaseAdminClient>>,
+  sessionToken: string,
+): Promise<{ session: DemoSessionRow; expiresAt: string }> {
+  const sessionId = randomUUID();
+  const tokenHash = hashSessionToken(sessionToken);
+  const createdUsers: User[] = [];
 
-  if (!error && data.user) return data.user;
+  try {
+    for (const role of DEMO_ROLES) {
+      createdUsers.push(await createVisitorUser(admin, sessionId, role));
+    }
 
-  const errorMessage = error?.message.toLowerCase() ?? "";
-  // Do not treat every HTTP 422 as a duplicate: Auth can return 422 for other
-  // validation failures, and those must remain visible in server diagnostics.
-  const isDuplicate =
-    /already\s+(registered|exists)|already been registered|user already registered|email.*already|duplicate user/.test(
-      errorMessage,
+    const userByRole = new Map<DemoRole, User>(
+      DEMO_ROLES.map((role, index) => [role, createdUsers[index]!]),
+    );
+    const clientHash = await getClientHash();
+
+    const { data: expiresAt, error } = await (admin as any).rpc(
+      "create_demo_visitor_workspace",
+      {
+        _session_id: sessionId,
+        _token_hash: tokenHash,
+        _consulta: userByRole.get("consulta")!.id,
+        _operacao: userByRole.get("operacao")!.id,
+        _gestao: userByRole.get("gestao")!.id,
+        _client_hash: clientHash,
+      },
     );
 
-  if (!isDuplicate) {
-    logAuthFailure(
-      "createUser",
-      role,
-      profile.email,
-      error ?? new Error("Supabase returned no user"),
+    if (error || !expiresAt) {
+      logDemoFailure(
+        "create_demo_visitor_workspace",
+        undefined,
+        error ?? new Error("No expiry returned"),
+      );
+      throw new Error(
+        "Não foi possível criar o ambiente individual. Confirme se as migrações de demonstração estão aplicadas.",
+      );
+    }
+
+    return {
+      session: {
+        session_id: sessionId,
+        consulta_user_id: userByRole.get("consulta")!.id,
+        operacao_user_id: userByRole.get("operacao")!.id,
+        gestao_user_id: userByRole.get("gestao")!.id,
+        expires_at: String(expiresAt),
+      },
+      expiresAt: String(expiresAt),
+    };
+  } catch (error) {
+    // Roll back Auth accounts if the database transaction did not complete.
+    await Promise.allSettled(
+      createdUsers.map((user) => admin.auth.admin.deleteUser(user.id)),
     );
-    throw new Error(
-      "Não foi possível preparar a conta de demonstração no Supabase Auth. Consulte os logs do servidor.",
-    );
+    throw error;
   }
-
-  const existing = await findUserByEmail(supabaseAdmin, profile.email, role);
-  if (!existing) {
-    logAuthFailure(
-      "createUser duplicate reconciliation",
-      role,
-      profile.email,
-      error ?? new Error("Auth reported a duplicate but listUsers returned no matching user"),
-    );
-    throw new Error(
-      "O Supabase Auth indicou que a conta já existe, mas não foi possível localizá-la. Consulte os logs do servidor.",
-    );
-  }
-
-  return prepareExistingDemoUser(supabaseAdmin, role, existing);
 }
 
 export const startDemoSession = createServerFn({ method: "POST" })
-  .validator((data: { role: DemoRole }) => {
+  .validator((data: { role: DemoRole; sessionToken?: string }) => {
     if (!data || !isDemoRole(data.role)) {
       throw new Error("Selecione um dos três perfis de demonstração.");
+    }
+    if (data.sessionToken !== undefined && !SESSION_TOKEN_PATTERN.test(data.sessionToken)) {
+      throw new Error(
+        "A sessão demonstrativa desta aba é inválida. Atualize a página e tente novamente.",
+      );
     }
     return data;
   })
   .handler(async ({ data }) => {
-    const supabaseAdmin = await createSupabaseAdminClient();
+    const admin = await createSupabaseAdminClient();
+    let sessionToken = data.sessionToken || generateSessionToken();
+    let session = data.sessionToken
+      ? await findActiveSession(admin, hashSessionToken(data.sessionToken))
+      : null;
+    let expiresAt = session?.expires_at ?? "";
 
-    // Accounts are fixed server-side; callers cannot pass an email or password.
-    const [consulta, operacao, gestao] = await Promise.all([
-      ensureDemoUser(supabaseAdmin, "consulta"),
-      ensureDemoUser(supabaseAdmin, "operacao"),
-      ensureDemoUser(supabaseAdmin, "gestao"),
-    ]);
-
-    const { data: workspaceId, error: workspaceError } = await supabaseAdmin.rpc("ensure_demo_workspace", {
-      _consulta: consulta.id,
-      _operacao: operacao.id,
-      _gestao: gestao.id,
-    });
-    if (workspaceError || !workspaceId) {
-      console.error("[Demo] Workspace provisioning failed:", workspaceError?.message ?? "No workspace id returned");
-      throw new Error(
-        "Não foi possível preparar os perfis demonstrativos. Confirme se a migração de demonstração do Supabase foi aplicada.",
-      );
+    if (!session) {
+      // Never reuse an expired token. A new session gets a new set of accounts
+      // and a fresh one-hour timer; expired records are handled by the cron.
+      if (data.sessionToken) sessionToken = generateSessionToken();
+      const created = await provisionVisitorSession(admin, sessionToken);
+      session = created.session;
+      expiresAt = created.expiresAt;
     }
 
-    const { error: inventoryError } = await supabaseAdmin.rpc("ensure_demo_inventory_accuracy", {
-      _org: workspaceId,
+    const email = roleEmail(session.session_id, data.role);
+    const { data: linkData, error: linkError } = await admin.auth.admin.generateLink({
+      type: "magiclink",
+      email,
     });
-    if (inventoryError) {
-      console.error("[Demo] Inventory demonstration provisioning failed:", inventoryError.message);
-      throw new Error(
-        "Não foi possível preparar a conferência demonstrativa. Aplique a migração de inventário demonstrativo do Supabase.",
-      );
-    }
 
-    const email = DEMO_PROFILES[data.role].email;
-    const { data: linkData, error: linkError } =
-      await supabaseAdmin.auth.admin.generateLink({
-        type: "magiclink",
-        email,
-      });
     if (linkError || !linkData.properties?.hashed_token) {
-      logAuthFailure(
+      logDemoFailure(
         "generateLink",
         data.role,
-        email,
-        linkError ?? new Error("Supabase did not return a hashed token"),
+        linkError ?? new Error("No hashed token returned"),
+      );
+      throw new Error("Não foi possível iniciar o perfil de demonstração. Tente novamente.");
+    }
+
+    return {
+      authTokenHash: linkData.properties.hashed_token,
+      sessionToken,
+      expiresAt,
+    };
+  });
+
+export const restoreDemoSession = createServerFn({ method: "POST" })
+  .validator((data: { sessionToken: string }) => {
+    if (!data || !SESSION_TOKEN_PATTERN.test(data.sessionToken)) {
+      throw new Error("Não há um ambiente válido de demonstração nesta aba.");
+    }
+    return data;
+  })
+  .handler(async ({ data }) => {
+    const admin = await createSupabaseAdminClient();
+    const { data: expiresAt, error } = await (admin as any).rpc(
+      "restore_demo_visitor_workspace",
+      { _token_hash: hashSessionToken(data.sessionToken) },
+    );
+
+    if (error || !expiresAt) {
+      logDemoFailure(
+        "restore_demo_visitor_workspace",
+        undefined,
+        error ?? new Error("No expiry returned"),
       );
       throw new Error(
-        "Não foi possível iniciar a sessão demonstrativa. Consulte os logs do servidor.",
+        "Não foi possível restaurar esta demonstração. A sessão pode ter expirado; entre novamente para criar um novo ambiente.",
       );
     }
 
-    // A one-time token is returned only for one of the three public demo profiles.
-    // The service-role key and all non-demo user details remain on the server.
-    return { tokenHash: linkData.properties.hashed_token };
+    return { expiresAt: String(expiresAt) };
   });

@@ -66,6 +66,24 @@ function createSupabaseFetch(supabaseUrl: string, supabaseKey: string): typeof f
 }
 
 
+function getTabScopedAuthStorageKey(): string {
+  if (typeof window === "undefined") return "armazen-auth-server";
+
+  try {
+    const storageKey = "armaZen:auth-tab-id";
+    let tabId = window.sessionStorage.getItem(storageKey);
+    if (!tabId) {
+      tabId = crypto.randomUUID();
+      window.sessionStorage.setItem(storageKey, tabId);
+    }
+    return `armazen-${tabId}-auth-token`;
+  } catch {
+    // A private browsing context may block sessionStorage. A random key keeps
+    // tabs from sharing a token, although the session may not survive reload.
+    return `armazen-${crypto.randomUUID()}-auth-token`;
+  }
+}
+
 function createSupabaseClient() {
   // Runtime public configuration supplied by the server is preferred; VITE_*
   // remains a build-time fallback for deployments that already inject it.
@@ -94,6 +112,7 @@ function createSupabaseClient() {
     },
     auth: {
       storage: brokeredPreviewStorage(),
+      storageKey: getTabScopedAuthStorageKey(),
       persistSession: true,
       autoRefreshToken: true,
     },
