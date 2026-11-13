@@ -47,9 +47,21 @@ A tela inicial oferece três acessos pré-configurados:
 - **Operação:** consulta dos registros, movimentações de estoque, contagens físicas e atualização de tarefas.
 - **Gestão:** acesso aos módulos operacionais, administração de armazéns e materiais, equipe, atributos configuráveis e exportação.
 
-Os perfis usam três contas fictícias distintas dentro de uma organização demonstrativa compartilhada. No primeiro acesso, o servidor prepara as contas, a organização e os dados de exemplo. A migração incremental acima precisa estar aplicada para esse provisionamento funcionar.
+### Ambientes temporários isolados
 
-O login demonstrativo não aceita e-mail ou senha arbitrários e não altera a senha de contas existentes. Os perfis reservados são para demonstração visual e funcional; não devem ser usados como contas de produção ou para armazenar dados reais. A chave de serviço permanece apenas no servidor.
+Cada nova aba do navegador cria um ambiente demonstrativo independente, com uma organização e três identidades temporárias — uma para cada perfil. Consulta, Operação e Gestão compartilham os dados somente dentro daquele ambiente; visitantes em outras abas, navegadores ou dispositivos não veem as alterações uns dos outros.
+
+- **Alterações reais dentro da cópia:** movimentações, exclusões, edição de materiais, endereços, tarefas, inventários, configurações e exportações são gravadas no workspace temporário daquela visita. O sistema não simula as operações na interface.
+- **Troca de perfil:** o botão **Trocar perfil** encerra a sessão atual e retorna à escolha de conta. A aba mantém o token temporário e permite entrar com outro perfil sem perder as alterações daquela visita.
+- **Restaurar dados iniciais:** na tela de escolha de conta, o botão **Restaurar dados iniciais** limpa somente o workspace daquela aba e recria os dados fictícios originais. A restauração não prolonga o prazo de validade.
+- **Expiração:** cada ambiente é válido por uma hora a partir da criação. O banco bloqueia consultas e operações a partir do instante de expiração; um job do Supabase Cron executa a remoção física a cada minuto, incluindo a organização, os registros e as três contas temporárias.
+- **Limites operacionais:** o provisionamento limita o número de ambientes ativos e a quantidade de criações por rede. Se o limite de ambientes simultâneos for atingido, novos acessos recebem uma mensagem para tentar novamente mais tarde.
+
+A migração [20261113000000_isolated_demo_workspaces.sql](supabase/migrations/20261113000000_isolated_demo_workspaces.sql) cria o registro de sessões, reforça as funções de autorização RLS, cria e restaura workspaces e agenda a limpeza automática com `pg_cron`. A migração também remove os vínculos das antigas contas públicas compartilhadas; os dados fictícios antigos são mantidos como arquivo sem membros, e não são utilizados pelos novos acessos.
+
+O token de cada demonstração é aleatório, mantido apenas no armazenamento da aba e armazenado no banco somente como hash. O Supabase Auth também usa uma chave de armazenamento diferente por aba para evitar que sessões abertas em abas distintas sobrescrevam umas às outras. As senhas das contas temporárias são aleatórias e desconhecidas dos visitantes; a entrada é feita por links mágicos gerados no servidor.
+
+Os ambientes são destinados a demonstrações com dados fictícios. Não use essas contas para armazenar informações reais. A chave de serviço permanece exclusivamente no servidor.
 
 ## Módulos
 
