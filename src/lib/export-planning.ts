@@ -88,7 +88,11 @@ const referenceFields: Record<ExportDataset, Record<string, ExportReferenceKind>
   },
 };
 
-export function getDefaultExportColumnName(field: string): string {
+export function getDefaultExportColumnName(field: string, dataset?: ExportDataset): string {
+  if (field === "code" && dataset === "materials") return "codigo_material";
+  if (field === "code" && dataset === "locations") return "codigo_endereco";
+  if (field === "quantity" && dataset === "balances") return "quantidade_estoque";
+  if (field === "quantity" && dataset === "movements") return "quantidade_movimentada";
   return defaultColumnNames[field] ?? field;
 }
 
