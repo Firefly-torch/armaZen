@@ -2,10 +2,10 @@
 -- Each browser tab receives three temporary role identities and its own org.
 begin;
 
--- Supabase Cron (pg_cron) executes the expiry sweep once per minute.
-create extension if not exists pg_cron with schema pg_catalog;
-grant usage on schema cron to postgres;
-grant all privileges on all tables in schema cron to postgres;
+-- pg_cron is a Supabase-managed extension. Do not create it or
+-- rewrite its internal grants inside an application migration: doing so can
+-- re-run the platform event trigger that manages privileges on schema cron.
+-- The cleanup job is registered below only when the extension is already enabled.
 
 create table public.demo_visitor_sessions (
   session_id uuid primary key,
@@ -400,11 +400,31 @@ grant execute on function public.create_demo_visitor_workspace(uuid, text, uuid,
 grant execute on function public.restore_demo_visitor_workspace(text) to service_role;
 grant execute on function public.cleanup_expired_demo_visitor_sessions() to service_role, postgres;
 
--- Supabase Cron supports scheduling a Postgres function every minute.
-select cron.schedule(
-  'armazen-demo-visitor-cleanup',
-  '* * * * *',
-  'select public.cleanup_expired_demo_visitor_sessions()'
-);
+-- Schedule the expiry sweep only when Supabase Cron is enabled.
+-- Dynamic SQL keeps this migration applicable even when pg_cron is not installed.
+-- The name check makes retries idempotent and avoids duplicate cleanup jobs.
+do $cron_schedule$
+declare
+  v_job_exists boolean := false;
+  v_job_id bigint;
+begin
+  if exists (select 1 from pg_extension where extname = 'pg_cron') then
+    execute 'select exists (select 1 from cron.job where jobname = $1)'
+      into v_job_exists
+      using 'armazen-demo-visitor-cleanup';
+
+    if not v_job_exists then
+      execute 'select cron.schedule($1, $2, $3)'
+        into v_job_id
+        using
+          'armazen-demo-visitor-cleanup',
+          '* * * * *',
+          'select public.cleanup_expired_demo_visitor_sessions()';
+    end if;
+  else
+    raise notice 'pg_cron ainda não está habilitado. A migration foi aplicada, mas a limpeza automática está pendente. Habilite Supabase Cron em Integrations > Cron e registre o job armazen-demo-visitor-cleanup.';
+  end if;
+end;
+$cron_schedule$;
 
 commit;
