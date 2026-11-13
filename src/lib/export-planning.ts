@@ -92,7 +92,11 @@ export function getDefaultExportColumnName(field: string): string {
   return defaultColumnNames[field] ?? field;
 }
 
-export function getExportFieldLabel(field: string): string {
+export function getExportFieldLabel(field: string, dataset?: ExportDataset): string {
+  if (field === "code" && dataset === "locations") return "Código do endereço";
+  if (field === "code" && dataset === "materials") return "Código do material";
+  if (field === "quantity" && dataset === "balances") return "Quantidade em estoque";
+  if (field === "quantity" && dataset === "movements") return "Quantidade movimentada";
   return exportFieldLabels[field] ?? field.replace(/_/g, " ");
 }
 
@@ -149,7 +153,7 @@ export function validateExportRows(
     .filter((field) => selectedFields.includes(field))
     .map((field) => ({
       field,
-      label: getExportFieldLabel(field),
+      label: getExportFieldLabel(field, dataset),
       rows: rows.filter((row) => row[field] == null || String(row[field]).trim() === "").length,
     }))
     .filter((item) => item.rows > 0);
