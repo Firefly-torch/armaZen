@@ -3,12 +3,13 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import * as XLSX from "xlsx";
 import {
-  Activity, AlertTriangle, ArrowLeftRight, Boxes, CheckCircle2, ClipboardCheck,
+  Activity, AlertTriangle, ArrowLeftRight, Boxes, Cable, CheckCircle2, ClipboardCheck,
   ClipboardList, Download, LayoutDashboard, MapPinned, Package, Plus, RefreshCw,
   ShieldCheck, Warehouse, Pencil, Search, Ban, Check, Users, GripVertical, MapPin, CalendarClock,
   ChevronDown, ChevronRight,
 } from "lucide-react";
 import { WarehouseMap } from "@/components/warehouse/warehouse-map";
+import { IntegrationDemo } from "@/components/integration-demo";
 import { supabase } from "@/integrations/supabase/client";
 import {
   getInventoryAccuracy,
@@ -51,7 +52,7 @@ export const Route = createFileRoute("/")({
   }),
 });
 
-type Section = "dashboard" | "warehouse" | "materials" | "movements" | "inventory" | "tasks" | "exports" | "settings";
+type Section = "dashboard" | "warehouse" | "materials" | "movements" | "inventory" | "tasks" | "exports" | "integrations" | "settings";
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type AnyRow = any; // untyped database rows in this prototype; keeps dot access allowed
 const db = supabase as any;
@@ -64,6 +65,7 @@ const nav: { id: Section; label: string; icon: typeof Boxes }[] = [
   { id: "inventory", label: "Inventário", icon: ClipboardCheck },
   { id: "tasks", label: "Tarefas operacionais", icon: ClipboardList },
   { id: "exports", label: "Exportação para ERP", icon: Download },
+  { id: "integrations", label: "Integrações ERP", icon: Cable },
   { id: "settings", label: "Usuários e configurações", icon: ShieldCheck },
 ];
 const movementTypes = ["entrada", "saida", "transferencia", "ajuste"] as const;
@@ -573,7 +575,7 @@ function Index() {
   );
   const visibleNav = nav.filter((item) => {
     if (canManage) return true;
-    if (item.id === "exports" || item.id === "settings") return false;
+    if (item.id === "exports" || item.id === "integrations" || item.id === "settings") return false;
     if (item.id === "inventory") return role === "operacao";
     return true;
   });
@@ -2371,8 +2373,9 @@ function Index() {
         {section==="inventory"&&inventorySection}
         {section==="tasks"&&tasksSection}
         {section==="exports"&&exportsSection}
+        {section==="integrations"&&<IntegrationDemo materials={materials} movements={movements} locations={locations} orgName={orgName}/>}
         {section==="settings"&&settingsSection}
-        <footer className="flex flex-wrap items-center justify-between gap-2 border-t pt-4 text-xs text-muted-foreground"><span>armaZen · Sistema de Gestão de Armazém</span><span>Exportação por arquivo; sem integração automática com ERP.</span></footer>
+        <footer className="flex flex-wrap items-center justify-between gap-2 border-t pt-4 text-xs text-muted-foreground"><span>armaZen · Sistema de Gestão de Armazém</span><span>Exportação por arquivo e demonstração de integração ERP; sem conexão externa.</span></footer>
       </div>
     </main>
   </div>;
