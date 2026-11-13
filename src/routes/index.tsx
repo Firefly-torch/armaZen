@@ -1751,7 +1751,7 @@ function Index() {
         throw new Error("A data inicial não pode ser posterior à data final.");
       }
 
-      const targetFields = selectedFields.map((field) => (exportFieldMappings[field] ?? "").trim() || getDefaultExportColumnName(field));
+      const targetFields = selectedFields.map((field) => (exportFieldMappings[field] ?? "").trim() || getDefaultExportColumnName(field, exportForm.dataset as ExportDataset));
       if (new Set(targetFields.map((field) => field.toLowerCase())).size !== targetFields.length) {
         throw new Error("Os nomes das colunas no arquivo precisam ser únicos.");
       }
@@ -2076,8 +2076,8 @@ function Index() {
                 <Field
                   key={field}
                   label={"Nome da coluna: " + getExportFieldLabel(field, exportForm.dataset as ExportDataset)}
-                  value={exportFieldMappings[field] ?? getDefaultExportColumnName(field)}
-                  placeholder={getDefaultExportColumnName(field)}
+                  value={exportFieldMappings[field] ?? getDefaultExportColumnName(field, exportForm.dataset as ExportDataset)}
+                  placeholder={getDefaultExportColumnName(field, exportForm.dataset as ExportDataset)}
                   onChange={(value) => {
                     setExportFieldMappings((current) => ({ ...current, [field]: value }));
                     setPreview([]);
