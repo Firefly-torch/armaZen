@@ -2023,7 +2023,7 @@ function Index() {
                 const allowedFields = new Set(datasets[exportForm.dataset]!.fields);
                 const savedFields = Array.isArray(config.fields) ? config.fields.filter((field: unknown): field is string => typeof field === "string" && allowedFields.has(field)) : datasets[exportForm.dataset]!.fields;
                 const requiredFields = mandatoryExportFields[exportForm.dataset as ExportDataset];
-                setSelectedFields(Array.from(new Set([...requiredFields, ...savedFields])));
+                setSelectedFields(Array.from(new Set([...savedFields, ...requiredFields])));
                 setExportFieldMappings((config.mappings ?? {}) as Record<string, string>);
                 setExportForm((current) => ({
                   ...current,
@@ -2075,7 +2075,7 @@ function Index() {
               {selectedFields.map((field) => (
                 <Field
                   key={field}
-                  label={"Nome da coluna: " + getExportFieldLabel(field)}
+                  label={"Nome da coluna: " + getExportFieldLabel(field, exportForm.dataset as ExportDataset)}
                   value={exportFieldMappings[field] ?? getDefaultExportColumnName(field)}
                   placeholder={getDefaultExportColumnName(field)}
                   onChange={(value) => {
