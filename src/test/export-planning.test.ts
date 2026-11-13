@@ -11,6 +11,10 @@ describe("export-planning", () => {
     expect(getDefaultExportColumnName("material_id")).toBe("codigo_material");
     expect(getDefaultExportColumnName("location_id")).toBe("codigo_endereco");
     expect(getDefaultExportColumnName("quantity")).toBe("quantity");
+    expect(getDefaultExportColumnName("code", "materials")).toBe("codigo_material");
+    expect(getDefaultExportColumnName("code", "locations")).toBe("codigo_endereco");
+    expect(getDefaultExportColumnName("quantity", "balances")).toBe("quantidade_estoque");
+    expect(getDefaultExportColumnName("quantity", "movements")).toBe("quantidade_movimentada");
   });
 
   it("uses labels that match the selected dataset", () => {
