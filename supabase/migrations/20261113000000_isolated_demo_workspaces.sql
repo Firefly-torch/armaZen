@@ -2,12 +2,14 @@
 -- Each browser tab receives three temporary role identities and its own org.
 begin;
 
+-- This migration is safe to retry if an earlier SQL Editor run left its
+-- initial DDL committed. Existing demo session data is preserved.
 -- pg_cron is a Supabase-managed extension. Do not create it or
 -- rewrite its internal grants inside an application migration: doing so can
 -- re-run the platform event trigger that manages privileges on schema cron.
 -- The cleanup job is registered below only when the extension is already enabled.
 
-create table public.demo_visitor_sessions (
+create table if not exists public.demo_visitor_sessions (
   session_id uuid primary key,
   token_hash text not null unique check (token_hash ~ '^[0-9a-f]{64}$'),
   org_id uuid unique references public.organizations(id) on delete set null,
@@ -18,8 +20,8 @@ create table public.demo_visitor_sessions (
   created_at timestamptz not null default now(),
   expires_at timestamptz not null default (now() + interval '1 hour')
 );
-create index demo_visitor_sessions_expiry_idx on public.demo_visitor_sessions(expires_at);
-create index demo_visitor_sessions_client_idx
+create index if not exists demo_visitor_sessions_expiry_idx on public.demo_visitor_sessions(expires_at);
+create index if not exists demo_visitor_sessions_client_idx
   on public.demo_visitor_sessions(client_hash, created_at desc)
   where client_hash is not null;
 
