@@ -1,52 +1,55 @@
-# Integrações ERP — demonstração do armaZen
+# Integrações ERP — visão de dados do armaZen
 
 ## Objetivo
 
-A área **Integrações ERP** demonstra, de forma interativa, como o armaZen poderá trocar informações com sistemas ERP. Ela é independente da guia **Exportação para ERP**, que continua responsável pela geração manual de arquivos CSV, XLSX e JSON.
+A guia **Integrações ERP** apresenta a estrutura prevista para o intercâmbio de informações entre o WMS armaZen e um sistema de gestão empresarial. Ela é independente da guia **Exportação para ERP**, que continua responsável por gerar arquivos CSV, XLSX e JSON para importação manual.
 
-## O que a demonstração permite
+O painel foi organizado para apresentar os principais fluxos, o mapeamento de campos e os registros operacionais que podem participar de uma integração.
 
-- Testar uma conexão fictícia e visualizar os dados ilustrativos do conector.
-- Mapear os campos de cadastro recebidos do ERP para o modelo de materiais do armaZen.
-- Conferir uma prévia dos registros depois da conversão.
-- Importar materiais fictícios para um sandbox isolado da demonstração.
-- Preparar até cinco movimentações recentes do armaZen e simular o envio para o ERP.
-- Simular uma falha de comunicação, visualizar o resultado e reprocessar o lote.
-- Consultar o histórico e o payload demonstrativo de cada operação.
+## Áreas do painel
 
-## Isolamento e persistência
+### Visão geral
 
-A demonstração não chama endpoints externos, não usa credenciais de fornecedores e não realiza sincronização real. Os materiais importados ficam em uma lista fictícia separada; eles não são gravados na tabela de materiais do Supabase. O envio utiliza os dados existentes somente para montar uma prévia e não cria, baixa ou altera saldos ou movimentações.
+Consolida os principais volumes da organização: materiais cadastrados e ativos, armazéns, endereços, linhas de saldo, movimentações e itens de inventário. Também reúne a atividade recente derivada de movimentações, exportações e auditoria.
 
-O mapeamento e o histórico demonstrativo ficam no armazenamento de sessão do navegador. Eles permanecem disponíveis enquanto a sessão da aba do navegador existir e podem ser apagados pelo botão **Limpar demonstração**.
+### Mapeamento
 
-## Como demonstrar
+Apresenta a correspondência entre campos de negócio do ERP e entidades do armaZen para materiais, armazéns, endereços, saldos, movimentações e inventários. Os nomes de campos externos são referências ilustrativas e deverão ser ajustados conforme o produto, versão e layout do ERP adotado.
 
-1. Entre no módulo **Integrações ERP** usando o perfil Gestão.
-2. Na aba **Conexão**, clique em **Testar conexão** e mostre o estado simulado.
-3. Em **Mapeamento**, altere a associação entre os campos do ERP fictício e os campos do armaZen. Observe a prévia ser atualizada.
-4. Em **Sincronização**, execute a importação dos três materiais de exemplo. O resultado será armazenado apenas no sandbox demonstrativo.
-5. Para demonstrar o fluxo de saída, habilite **Simular falha no próximo envio** e envie o lote de movimentações.
-6. Abra o **Histórico**, consulte o payload e clique em **Reprocessar lote** para demonstrar a recuperação.
-7. Repita o envio sem falha para mostrar o cenário de sucesso.
+### Fluxos de dados
 
-## Diferença entre demonstração e integração real
+Organiza a comunicação prevista em duas direções:
 
-| Recurso | Demonstração atual | Integração real futura |
-| --- | --- | --- |
-| Conexão | Estado simulado no navegador | Teste do endpoint do fornecedor |
-| Autenticação | Token ilustrativo, sem segredo | OAuth, chave de API ou método do ERP |
-| Mapeamento | Campos de exemplo configuráveis | Mapeamento validado para cada API/versão |
-| Importação | Lista fictícia isolada | Gravação controlada após validação e confirmação |
-| Envio | Resposta simulada | Requisição real e confirmação do ERP |
-| Falhas | Falha configurada pelo usuário | Timeout, indisponibilidade, validação ou recusa real |
-| Reprocessamento | Atualização simulada do histórico | Fila persistente, idempotência e política de retentativa |
-| Histórico | Armazenamento de sessão do navegador | Registro persistente no servidor, com auditoria |
+- **ERP → armaZen:** cadastros de materiais, armazéns e referências de endereçamento.
+- **armaZen → ERP:** saldos por posição e lote, movimentações e resultados de inventário.
 
-## Próximos passos para uma integração real
+A tela também descreve as etapas gerais de recebimento, conversão, validação e retorno dos dados.
 
-Antes de conectar um ERP, será necessário escolher o fornecedor, produto e versão; obter documentação e credenciais de homologação; definir qual sistema é a fonte principal de cada informação; validar códigos, unidades e regras de negócio; e implementar um conector no servidor.
+### Dados e histórico
 
-Uma integração de produção também precisará de armazenamento seguro de credenciais, fila persistente, idempotência para impedir duplicidade, logs técnicos, alertas, controle de acesso, conciliação e testes com o ERP do cliente.
+Apresenta informações carregadas dos módulos operacionais da organização:
+- cadastro de materiais e seus saldos consolidados por material;
+- saldos por material, endereço, armazém, lote e validade;
+- histórico de movimentações com origem, destino, quantidade e referência;
+- resultados de inventário com quantidade esperada, contada e diferença;
+- histórico de arquivos exportados;
+- eventos de auditoria disponíveis.
 
-**Importante:** a tela representa um fluxo possível de integração. Ela não comprova compatibilidade com TOTVS, Senior, Sankhya, SAP ou qualquer outro ERP.
+As tabelas exibem os registros carregados pelo aplicativo para a organização atual. O volume depende dos limites de consulta definidos nos módulos de origem.
+
+## Regras de conversão consideradas
+
+- **Identificadores:** códigos de materiais, armazéns e endereços devem ser utilizados como referências de negócio; identificadores internos do banco não devem ser expostos como códigos externos.
+- **Unidades:** quantidades precisam preservar a unidade de medida de cada material. Unidades diferentes não podem ser somadas em um saldo geral.
+- **Lotes e validade:** lote e data de validade devem acompanhar o saldo da respectiva posição quando essas informações estiverem cadastradas.
+- **Movimentações:** cada evento deve preservar número, tipo, material, quantidade, origem, destino, lote, referência e data/hora.
+- **Inventário:** a integração deve considerar quantidade esperada, quantidade física contada, diferença e justificativa.
+- **Duplicidade e reprocessamento:** uma integração efetiva deverá identificar cada evento de forma única para impedir lançamentos repetidos em caso de retentativa.
+
+## Escopo técnico
+
+O painel apresenta uma visão de integração e utiliza os registros reais disponíveis no armaZen para contextualizar os fluxos. A comunicação com um ERP externo depende da seleção do fornecedor, produto e versão, da definição de credenciais e ambiente de homologação, do ajuste dos mapeamentos e da implementação do conector no servidor.
+
+Uma integração efetiva também exigirá armazenamento seguro de credenciais, processamento em segundo plano, fila persistente, idempotência, tratamento de falhas, logs técnicos, monitoramento e conciliação entre os sistemas.
+
+A existência do painel e dos mapeamentos de referência não representa uma conexão ativa nem certifica compatibilidade com um ERP específico.

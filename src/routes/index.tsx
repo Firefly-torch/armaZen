@@ -2373,7 +2373,7 @@ function Index() {
         {section==="inventory"&&inventorySection}
         {section==="tasks"&&tasksSection}
         {section==="exports"&&exportsSection}
-        {section==="integrations"&&<IntegrationDemo materials={materials} movements={movements} locations={locations} orgName={orgName}/>}
+        {section==="integrations"&&<IntegrationDemo materials={materials} balances={balances} movements={movements} locations={locations} warehouses={warehouses} inventoryItems={counts} exportHistory={history} auditLogs={auditLogs} orgName={orgName}/>}
         {section==="settings"&&settingsSection}
         <footer className="flex flex-wrap items-center justify-between gap-2 border-t pt-4 text-xs text-muted-foreground"><span>armaZen · Sistema de Gestão de Armazém</span><span>Exportação por arquivo e demonstração de integração ERP; sem conexão externa.</span></footer>
       </div>
