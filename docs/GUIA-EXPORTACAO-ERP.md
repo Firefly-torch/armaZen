@@ -6,10 +6,21 @@ A exportação gera um arquivo com informações cadastradas no armaZen. Ela nã
 
 ## Fluxo em quatro etapas
 
-1. **Dados:** escolha um conjunto (materiais, saldos, endereços, movimentações, inventário ou tarefas), defina um período e, se necessário, um filtro textual.
-2. **Colunas e formato:** escolha as informações que deseja incluir e o formato XLSX, CSV ou JSON. Campos obrigatórios permanecem selecionados. O perfil Gestão também pode salvar uma configuração para reutilizá-la.
+1. **Dados:** escolha um conjunto (materiais, saldos, endereços, movimentações, inventário ou tarefas) e defina um período.
+2. **Colunas e formato:** escolha as informações que deseja incluir e o formato XLSX, CSV ou JSON. Campos obrigatórios permanecem selecionados. Depois de marcar os campos, você pode usar o filtro opcional para pesquisar somente neles; deixe-o vazio para manter todos os registros do período. O perfil Gestão também pode salvar uma configuração para reutilizá-la.
 3. **Conferência:** gere a prévia, confira a amostra e corrija campos obrigatórios sem valor. A geração é bloqueada enquanto houver campos obrigatórios vazios.
 4. **Arquivo pronto:** o navegador solicita o download e o sistema registra a geração no histórico.
+
+## Separador do arquivo CSV
+
+O separador é o caractere usado para dividir os valores das colunas em cada linha do arquivo. Escolha aquele que o ERP ou o processo de importação espera. Por exemplo, com ponto e vírgula, uma linha pode ficar assim:
+
+```text
+codigo_material;descricao;quantidade
+MP-001;Chapa de aço;25
+```
+
+Também é possível selecionar vírgula, barra vertical (`|`) ou tabulação. A opção precisa corresponder à configuração de importação do sistema de destino; mudar o separador não altera os dados, apenas a forma como as colunas são separadas no CSV.
 
 ## Identificadores de relacionamento
 

@@ -1955,14 +1955,7 @@ function Index() {
               setExportPreviewLoaded(false); }}
             />
           </div>
-          <Field
-            label="Filtro opcional"
-            value={exportSearch}
-            onChange={(value) => { setExportSearch(value); setPreview([]);
-              setExportPreviewLoaded(false); }}
-            placeholder="Digite um código, descrição, endereço ou informação"
-          />
-          <p className="text-xs text-muted-foreground">O filtro procura nos campos que você escolherá na próxima etapa. As datas usam a criação dos registros, exceto nos saldos, que usam a última atualização.</p>
+          <p className="text-xs text-muted-foreground">As datas usam a criação dos registros, exceto nos saldos, que usam a última atualização.</p>
           <div className="flex justify-end">
             <button type="button" className="h-10 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground" onClick={() => setExportStep(2)}>
               Continuar
@@ -1989,17 +1982,25 @@ function Index() {
               ]}
             />
             {exportForm.format === "csv" && (
-              <SelectField
-                label="Separador entre colunas"
-                value={exportForm.delimiter}
-                onChange={(value) => setExportForm((current) => ({ ...current, delimiter: value }))}
-                options={[
-                  { value: ";", label: "Ponto e vírgula (;)" },
-                  { value: ",", label: "Vírgula (,)" },
-                  { value: "|", label: "Barra vertical (|)" },
-                  { value: "\t", label: "Tabulação" },
-                ]}
-              />
+              <div className="space-y-1.5">
+                <SelectField
+                  label="Separador entre colunas"
+                  value={exportForm.delimiter}
+                  onChange={(value) => setExportForm((current) => ({ ...current, delimiter: value }))}
+                  options={[
+                    { value: ";", label: "Ponto e vírgula (;)" },
+                    { value: ",", label: "Vírgula (,)" },
+                    { value: "|", label: "Barra vertical (|)" },
+                    { value: "\t", label: "Tabulação" },
+                  ]}
+                />
+                <p className="text-xs text-muted-foreground">
+                  É o caractere que divide os valores de cada coluna no arquivo CSV. Escolha o mesmo separador exigido pelo ERP ou pelo processo de importação.
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Exemplo com ponto e vírgula: <code>codigo_material;descricao;quantidade</code>
+                </p>
+              </div>
             )}
             <SelectField
               label="Formato das datas"
@@ -2066,6 +2067,22 @@ function Index() {
                 );
               })}
             </div>
+          </div>
+
+          <div className="rounded-lg border p-4">
+            <Field
+              label="Filtro opcional nos campos selecionados"
+              value={exportSearch}
+              onChange={(value) => {
+                setExportSearch(value);
+                setPreview([]);
+                setExportPreviewLoaded(false);
+              }}
+              placeholder="Digite um código, descrição, endereço ou informação"
+            />
+            <p className="mt-2 text-xs text-muted-foreground">
+              A pesquisa considera somente os campos marcados acima. Deixe em branco para incluir todos os registros do período.
+            </p>
           </div>
 
           <div className="rounded-lg border p-4">
