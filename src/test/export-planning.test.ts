@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   getDefaultExportColumnName,
+  getExportFieldLabel,
   resolveExportRows,
   validateExportRows,
 } from "@/lib/export-planning";
@@ -10,6 +11,13 @@ describe("export-planning", () => {
     expect(getDefaultExportColumnName("material_id")).toBe("codigo_material");
     expect(getDefaultExportColumnName("location_id")).toBe("codigo_endereco");
     expect(getDefaultExportColumnName("quantity")).toBe("quantity");
+  });
+
+  it("uses labels that match the selected dataset", () => {
+    expect(getExportFieldLabel("code", "materials")).toBe("Código do material");
+    expect(getExportFieldLabel("code", "locations")).toBe("Código do endereço");
+    expect(getExportFieldLabel("quantity", "balances")).toBe("Quantidade em estoque");
+    expect(getExportFieldLabel("quantity", "movements")).toBe("Quantidade movimentada");
   });
 
   it("replaces internal identifiers with material and address codes", () => {
