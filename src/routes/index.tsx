@@ -2058,7 +2058,7 @@ function Index() {
                       }}
                     />
                     <span className="min-w-0 flex-1">
-                      <span className="block font-medium">{getExportFieldLabel(field)}</span>
+                      <span className="block font-medium">{getExportFieldLabel(field, exportForm.dataset as ExportDataset)}</span>
                       <span className="block break-all text-xs text-muted-foreground">{field}</span>
                     </span>
                     {required && <span className="shrink-0 text-[10px] font-semibold text-primary">Obrigatório</span>}
@@ -2185,7 +2185,7 @@ function Index() {
 
               {exportMissingSelection.length > 0 && (
                 <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm">
-                  Colunas obrigatórias não selecionadas: {exportMissingSelection.map(getExportFieldLabel).join(", ")}.
+                  Colunas obrigatórias não selecionadas: {exportMissingSelection.map((field) => getExportFieldLabel(field, exportForm.dataset as ExportDataset)).join(", ")}.
                 </div>
               )}
               {exportRequiredDetails.length > 0 && (
