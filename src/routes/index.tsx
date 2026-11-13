@@ -402,7 +402,6 @@ function Index() {
     setSelectedFields(datasets[exportForm.dataset]?.fields ?? []);
     setExportFieldMappings({});
     setPreview([]);
-              setExportPreviewLoaded(false);
     setExportMissingValues(0);
     setExportMissingRequired(0);
     setExportMissingSelection([]);
