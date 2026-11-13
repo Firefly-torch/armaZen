@@ -1772,7 +1772,7 @@ function Index() {
       }
 
       const collectIds = (...fields: string[]) =>
-        Array.from(new Set(sourceRows.flatMap((row) => fields.map((field) => row[field]).filter((value) => value != null && String(value).trim() !== "").map(String)));
+        Array.from(new Set(sourceRows.flatMap((row) => fields.map((field) => row[field]).filter((value) => value != null && String(value).trim() !== "").map(String))));
 
       const loadOrgReferenceMap = async (
         table: string,
