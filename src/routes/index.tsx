@@ -25,6 +25,15 @@ import {
   recommendStorageLocations,
 } from "@/lib/warehouse-planning";
 import { buildCycleCountPlan, type CycleCountCandidate } from "@/lib/cycle-count-planning";
+import {
+  getDefaultExportColumnName,
+  getExportFieldLabel,
+  mandatoryExportFields,
+  resolveExportRows,
+  validateExportRows,
+  type ExportDataset,
+  type ExportReferenceMaps,
+} from "@/lib/export-planning";
 import { startDemoSession, type DemoRole } from "@/integrations/supabase/admin-auth";
 import type { User } from "@supabase/supabase-js";
 
@@ -74,14 +83,6 @@ const datasets: Record<string, { label: string; table: string; fields: string[] 
   movements: { label: "Movimentações", table: "stock_movements", fields: ["number", "type", "created_at", "material_id", "quantity", "from_location_id", "to_location_id", "lot", "reason", "reference", "notes", "user_id"] },
   counts: { label: "Inventário", table: "inventory_count_items", fields: ["count_id", "material_id", "location_id", "lot", "expected_qty", "counted_qty", "difference", "reason", "created_at", "user_id"] },
   tasks: { label: "Tarefas", table: "tasks", fields: ["title", "description", "type", "priority", "status", "assignee_id", "due_at", "material_id", "location_id", "created_at"] },
-};
-const mandatoryExportFields: Record<string, string[]> = {
-  materials: ["code", "description", "category", "unit"],
-  balances: ["material_id", "location_id", "quantity"],
-  locations: ["code", "name", "warehouse_id"],
-  movements: ["type", "material_id", "quantity"],
-  counts: ["count_id", "material_id", "location_id", "counted_qty", "reason"],
-  tasks: ["title", "type", "status"],
 };
 
 function Field({ label, value, onChange, type = "text", required = false, placeholder, min, step }: {
@@ -385,6 +386,13 @@ function Index() {
   const [exportToDate, setExportToDate] = useState("");
   const [exportMissingValues, setExportMissingValues] = useState(0);
   const [exportMissingRequired, setExportMissingRequired] = useState(0);
+  const [exportMissingSelection, setExportMissingSelection] = useState<string[]>([]);
+  const [exportRequiredDetails, setExportRequiredDetails] = useState<Array<{ field: string; label: string; rows: number }>>([]);
+  const [exportReferenceIssues, setExportReferenceIssues] = useState(0);
+  const [exportAtLimit, setExportAtLimit] = useState(false);
+  const [exportSearch, setExportSearch] = useState("");
+  const [exportStep, setExportStep] = useState(1);
+  const [exportLastFile, setExportLastFile] = useState("");
   const [balanceAuditRows, setBalanceAuditRows] = useState<AnyRow[]>([]);
   const [balanceAuditPerformed, setBalanceAuditPerformed] = useState(false);
   const [balanceAuditApplied, setBalanceAuditApplied] = useState(false);
@@ -395,6 +403,13 @@ function Index() {
     setPreview([]);
     setExportMissingValues(0);
     setExportMissingRequired(0);
+    setExportMissingSelection([]);
+    setExportRequiredDetails([]);
+    setExportReferenceIssues(0);
+    setExportAtLimit(false);
+    setExportSearch("");
+    setExportStep(1);
+    setExportLastFile("");
   }, [exportForm.dataset]);
 
   useEffect(() => {
@@ -1723,21 +1738,538 @@ function Index() {
     </Panel>
   </div>;
 
+  const runExportPreview = async () => {
+    setDataError("");
+    setMessage("");
+    try {
+      const dataset = exportForm.dataset as ExportDataset;
+      const definition = datasets[dataset];
+      if (!definition) throw new Error("Selecione um conjunto de dados válido.");
+      if (exportFromDate && exportToDate && exportFromDate > exportToDate) {
+        throw new Error("A data inicial não pode ser posterior à data final.");
+      }
+
+      const targetFields = selectedFields.map((field) => (exportFieldMappings[field] ?? "").trim() || getDefaultExportColumnName(field));
+      if (new Set(targetFields.map((field) => field.toLowerCase())).size !== targetFields.length) {
+        throw new Error("Os nomes das colunas no arquivo precisam ser únicos.");
+      }
+
+      const dateColumn = dataset === "balances" ? "updated_at" : "created_at";
+      const dateFrom = exportFromDate ? new Date(exportFromDate + "T00:00:00").toISOString() : null;
+      const dateTo = exportToDate ? new Date(exportToDate + "T23:59:59.999").toISOString() : null;
+      const sourceRows: AnyRow[] = [];
+      for (let offset = 0; offset < 5000; offset += 1000) {
+        let request = db.from(definition.table).select("*").eq("org_id", orgId);
+        if (dateFrom) request = request.gte(dateColumn, dateFrom);
+        if (dateTo) request = request.lte(dateColumn, dateTo);
+        const { data, error } = await request.order(dateColumn, { ascending: true }).range(offset, Math.min(offset + 999, 4999));
+        if (error) throw error;
+        const pageRows = data ?? [];
+        sourceRows.push(...pageRows);
+        if (pageRows.length < 1000) break;
+      }
+
+      const collectIds = (...fields: string[]) =>
+        Array.from(new Set(sourceRows.flatMap((row) => fields.map((field) => row[field]).filter((value) => value != null && String(value).trim() !== "").map(String)));
+
+      const loadOrgReferenceMap = async (
+        table: string,
+        ids: string[],
+        select: string,
+        getLabel: (row: AnyRow) => string,
+      ): Promise<Map<string, string>> => {
+        const result = new Map<string, string>();
+        for (let offset = 0; offset < ids.length; offset += 400) {
+          const batch = ids.slice(offset, offset + 400);
+          const { data, error } = await db.from(table).select(select).eq("org_id", orgId).in("id", batch);
+          if (error) throw error;
+          for (const row of data ?? []) {
+            const label = getLabel(row as AnyRow).trim();
+            if (label) result.set(String((row as AnyRow).id), label);
+          }
+        }
+        return result;
+      };
+
+      const [materialMap, locationMap, warehouseMap, levelMap, sessionMap] = await Promise.all([
+        loadOrgReferenceMap("materials", collectIds("material_id"), "id,code", (row) => String(row.code ?? "")),
+        loadOrgReferenceMap("locations", collectIds("location_id", "parent_id", "from_location_id", "to_location_id"), "id,code", (row) => String(row.code ?? "")),
+        loadOrgReferenceMap("warehouses", collectIds("warehouse_id"), "id,code", (row) => String(row.code ?? "")),
+        loadOrgReferenceMap("location_levels", collectIds("level_id"), "id,name", (row) => String(row.name ?? "")),
+        loadOrgReferenceMap("inventory_counts", collectIds("count_id"), "id,description,created_at", (row) => {
+          const description = String(row.description ?? "").trim();
+          return description || (row.created_at ? "Inventário de " + new Date(String(row.created_at)).toLocaleDateString("pt-BR") : "");
+        }),
+      ]);
+
+      const userIds = collectIds("user_id", "assignee_id");
+      const userMap = new Map<string, string>();
+      for (const member of members) {
+        const label = String(member.profiles?.full_name ?? member.profiles?.email ?? "").trim();
+        if (label) userMap.set(String(member.user_id), label);
+      }
+      const missingProfileIds = userIds.filter((id) => !userMap.has(id));
+      for (let offset = 0; offset < missingProfileIds.length; offset += 400) {
+        const batch = missingProfileIds.slice(offset, offset + 400);
+        const { data } = await db.from("profiles").select("id,full_name,email").in("id", batch);
+        for (const profile of data ?? []) {
+          const row = profile as AnyRow;
+          const label = String(row.full_name ?? row.email ?? "").trim();
+          if (label) userMap.set(String(row.id), label);
+        }
+      }
+
+      const referenceMaps: ExportReferenceMaps = {
+        materials: materialMap,
+        locations: locationMap,
+        warehouses: warehouseMap,
+        levels: levelMap,
+        sessions: sessionMap,
+        users: userMap,
+      };
+      const resolved = resolveExportRows(dataset, sourceRows, referenceMaps);
+      const query = exportSearch.trim().toLowerCase();
+      const filteredRows = query
+        ? resolved.rows.filter((row) => selectedFields.some((field) => String(row[field] ?? "").toLowerCase().includes(query)))
+        : resolved.rows;
+      const validation = validateExportRows(dataset, selectedFields, filteredRows);
+      const missingValues = filteredRows.reduce(
+        (total, row) => total + selectedFields.filter((field) => row[field] == null || String(row[field]).trim() === "").length,
+        0,
+      );
+      const previewRows = filteredRows.map((row) =>
+        Object.fromEntries(selectedFields.map((field, index) => [targetFields[index], row[field] ?? ""])),
+      );
+
+      setExportMissingValues(missingValues);
+      setExportMissingRequired(validation.missingValues);
+      setExportMissingSelection(validation.missingSelection);
+      setExportRequiredDetails(validation.missingByField);
+      setExportReferenceIssues(resolved.unresolvedReferences);
+      setExportAtLimit(sourceRows.length === 5000);
+      setPreview(previewRows);
+      notify("Prévia carregada: " + filteredRows.length + " registro(s). Confira os campos obrigatórios antes de gerar o arquivo.");
+    } catch (error) {
+      fail(error);
+    }
+  };
+
+  const createExportFile = async () => {
+    if (!preview.length) throw new Error("Não há registros na prévia para exportar.");
+    if (exportMissingSelection.length > 0 || exportMissingRequired > 0) {
+      throw new Error("A exportação foi bloqueada porque há campos obrigatórios ausentes. Corrija os dados antes de gerar o arquivo.");
+    }
+    if (exportForm.format === "csv" && (!exportForm.delimiter || exportForm.delimiter.length !== 1)) {
+      throw new Error("Escolha um separador CSV válido.");
+    }
+
+    const safeName = datasets[exportForm.dataset]!.label.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+    const output = buildExportBlob(exportForm.format, preview, exportForm.delimiter, exportForm.date_format);
+    const filename = "armaZen-" + safeName + "." + output.extension;
+    if (user && orgId) {
+      const { error } = await db.from("export_history").insert({
+        org_id: orgId,
+        user_id: user.id,
+        dataset: exportForm.dataset,
+        format: exportForm.format,
+        record_count: preview.length,
+        filters: {
+          fields: selectedFields,
+          mappings: exportFieldMappings,
+          delimiter: exportForm.delimiter,
+          date_format: exportForm.date_format,
+          from: exportFromDate,
+          to: exportToDate,
+          search: exportSearch,
+        },
+        template_id: exportForm.template_id || null,
+        template_name: exportForm.template_name || null,
+      });
+      if (error) throw error;
+    }
+
+    downloadBlob(output.blob, filename);
+    setExportLastFile(filename);
+    setExportStep(4);
+    notify("Arquivo gerado no navegador. O armaZen não enviou os dados ao ERP.");
+  };
+
   const exportsSection = <div className="space-y-5">
-    <Panel title="Preparar exportação" description="Gera arquivos a partir dos dados consultados. Isso não sincroniza nem importa dados em um ERP.">
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><SelectField label="Conjunto de dados" value={exportForm.dataset} onChange={v=>setExportForm({...exportForm,dataset:v,template_id:""})} options={Object.entries(datasets).map(([value,d])=>({value,label:d.label}))}/><SelectField label="Formato" value={exportForm.format} onChange={v=>setExportForm({...exportForm,format:v})} options={[{value:"csv",label:"CSV"},{value:"xlsx",label:"XLSX"},{value:"json",label:"JSON"}]}/><SelectField label="Delimitador CSV" value={exportForm.delimiter} onChange={v=>setExportForm({...exportForm,delimiter:v})} options={[{value:";",label:"Ponto e vírgula (;)"},{value:",",label:"Vírgula (,)"},{value:"|",label:"Barra vertical (|)"},{value:"\t",label:"Tabulação"}]}/><SelectField label="Formato de data" value={exportForm.date_format} onChange={v=>setExportForm({...exportForm,date_format:v})} options={[{value:"ISO",label:"ISO (AAAA-MM-DD)"},{value:"BR",label:"Brasil (DD/MM/AAAA)"}]}/><SelectField label="Modelo salvo" value={exportForm.template_id} onChange={v=>{const t=templates.find(x=>x.id===v);setExportForm({...exportForm,template_id:v,template_name:t?.name??""});setExportFieldMappings(t?.config?.mappings??{});if(t?.config?.fields)setSelectedFields(t.config.fields);if(t?.config?.delimiter)setExportForm(prev=>({...prev,template_id:v,template_name:t.name,delimiter:t.config.delimiter}));}} options={templates.filter(t=>t.dataset===exportForm.dataset).map(t=>({value:t.id,label:t.name}))}/></div>
-      <div className="mt-4"><h3 className="mb-2 text-sm font-semibold">Campos a exportar (selecione a ordem abaixo)</h3><div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{datasets[exportForm.dataset]!.fields.map(f=><label key={f} className="flex items-center gap-2 rounded-lg border px-3 py-2 text-sm"><input type="checkbox" checked={selectedFields.includes(f)} onChange={e=>setSelectedFields(old=>e.target.checked?[...old,f]:old.filter(x=>x!==f))}/>{f}</label>)}</div><p className="mt-2 text-xs text-muted-foreground">A ordem dos campos selecionados determina a ordem das colunas. Os modelos são personalizados, não layouts oficiais de ERP.</p></div>
-      <div className="mt-4 rounded-lg border p-4">
-        <h3 className="text-sm font-semibold">Mapeamento de campos para o ERP</h3>
-        <p className="mt-1 text-xs text-muted-foreground">Informe o nome da coluna no arquivo de destino. Por padrão, o nome original do campo é mantido.</p>
-        <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{selectedFields.map(field=><Field key={field} label={`Destino de: ${field}`} value={exportFieldMappings[field]??field} onChange={value=>setExportFieldMappings(current=>({...current,[field]:value}))} required/>)}</div>
+    <Panel
+      title="Exportação de dados"
+      description="Siga as etapas para preparar um arquivo organizado. Esta função gera um arquivo; ela não conecta nem sincroniza o ERP."
+    >
+      <div className="mb-5 grid grid-cols-4 gap-2" aria-label="Etapas da exportação">
+        {[
+          { number: 1, label: "Dados" },
+          { number: 2, label: "Colunas e formato" },
+          { number: 3, label: "Conferência" },
+          { number: 4, label: "Arquivo pronto" },
+        ].map((step) => (
+          <button
+            key={step.number}
+            type="button"
+            disabled={step.number > exportStep}
+            onClick={() => setExportStep(step.number)}
+            className={"min-w-0 rounded-lg border px-2 py-3 text-left text-xs transition-colors " + (exportStep === step.number ? "border-primary bg-primary/5 text-primary" : exportStep > step.number ? "border-primary/30 bg-muted/40" : "opacity-60")}
+          >
+            <span className="mb-1 block font-semibold">Etapa {step.number}</span>
+            <span className="block break-words">{step.label}</span>
+          </button>
+        ))}
       </div>
-      {canManage&&<div className="mt-4 flex flex-wrap items-end gap-3"><div className="w-full max-w-sm"><Field label="Nome do modelo para salvar" value={exportForm.template_name} onChange={v=>setExportForm({...exportForm,template_name:v})} placeholder="Ex.: Modelo ERP interno"/></div><button className="h-10 rounded-lg border px-4 text-sm font-medium" disabled={!exportForm.template_name.trim()||selectedFields.length===0||saving} onClick={()=>void runSave(async()=>{const payload={org_id:orgId,name:exportForm.template_name.trim(),dataset:exportForm.dataset,created_by:user?.id,config:{fields:selectedFields,mappings:exportFieldMappings,delimiter:exportForm.delimiter,date_format:exportForm.date_format,format:exportForm.format},updated_at:new Date().toISOString()};const {error}=await db.from("export_templates").insert(payload);if(error)throw error;setExportForm({...exportForm,template_name:""});},"Modelo de exportação salvo.")}>Salvar modelo</button></div>}
-      <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><Field label={exportForm.dataset==="balances"?"Atualizado a partir de":"Criado a partir de"} type="date" value={exportFromDate} onChange={setExportFromDate}/><Field label={exportForm.dataset==="balances"?"Atualizado até":"Criado até"} type="date" value={exportToDate} onChange={setExportToDate}/><div className="sm:col-span-2"><Field label="Filtro textual da prévia" value={search} onChange={setSearch} placeholder="Filtrar registros carregados"/></div></div>
-      <div className="mt-5 flex flex-wrap items-center gap-3"><button className="flex h-10 items-center gap-2 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground" disabled={loading||selectedFields.length===0} onClick={async()=>{setDataError("");try{const d=datasets[exportForm.dataset]!;if(exportFromDate&&exportToDate&&exportFromDate>exportToDate)throw new Error("A data inicial não pode ser posterior à data final.");const targetFields=selectedFields.map(field=>(exportFieldMappings[field]??"").trim()||field);if(new Set(targetFields.map(field=>field.toLowerCase())).size!==targetFields.length)throw new Error("Os nomes de destino precisam ser únicos.");const dateColumn=exportForm.dataset==="balances"?"updated_at":"created_at";const dateFrom=exportFromDate?new Date(`${exportFromDate}T00:00:00`).toISOString():null;const dateTo=exportToDate?new Date(`${exportToDate}T23:59:59.999`).toISOString():null;const sourceRows:AnyRow[]=[];for(let offset=0;offset<5000;offset+=1000){let request=db.from(d.table).select("*").eq("org_id",orgId);if(dateFrom)request=request.gte(dateColumn,dateFrom);if(dateTo)request=request.lte(dateColumn,dateTo);const {data,error}=await request.order(dateColumn,{ascending:true}).range(offset,Math.min(offset+999,4999));if(error)throw error;const pageRows=data??[];sourceRows.push(...pageRows);if(pageRows.length<1000)break;}const rows=sourceRows.map((row:AnyRow)=>Object.fromEntries(selectedFields.map((field,index)=>[targetFields[index],row[field]??""])));const query=search.trim().toLowerCase();const filteredRows=query?rows.filter((row:AnyRow)=>Object.values(row).some(v=>String(v??"").toLowerCase().includes(query))):rows;const missing=filteredRows.reduce((total:number,row:AnyRow)=>total+Object.values(row).filter(value=>value==null||String(value).trim()==="").length,0);const requiredFields=(mandatoryExportFields[exportForm.dataset]??[]).filter(field=>selectedFields.includes(field));const missingRequired=filteredRows.reduce((total:number,row:AnyRow)=>total+requiredFields.filter(field=>{const mappedField=targetFields[selectedFields.indexOf(field)];const value=row[mappedField];return value==null||String(value).trim()==="";}).length,0);setExportMissingValues(missing);setExportMissingRequired(missingRequired);setPreview(filteredRows);notify(`Prévia carregada: ${filteredRows.length} registro(s); ${missingRequired} campo(s) obrigatório(s) vazio(s). Limite consultado: 5.000 registros.`);}catch(e){fail(e);}}}><Search className="h-4 w-4"/> Pré-visualizar</button><button className="flex h-10 items-center gap-2 rounded-lg border px-4 text-sm font-semibold" disabled={preview.length===0||!orgId} onClick={()=>void runSave(async()=>{if(!preview.length)throw new Error("Gere uma prévia com ao menos um registro antes de exportar.");if(exportForm.format==="csv"&&(!exportForm.delimiter||exportForm.delimiter.length!==1))throw new Error("Escolha um delimitador CSV de um único caractere.");const safeName=datasets[exportForm.dataset]!.label.toLowerCase().replace(/[^a-z0-9]+/g,"-");const output=buildExportBlob(exportForm.format,preview,exportForm.delimiter,exportForm.date_format);if(user&&orgId){const {error}=await db.from("export_history").insert({org_id:orgId,user_id:user.id,dataset:exportForm.dataset,format:exportForm.format,record_count:preview.length,filters:{fields:selectedFields,mappings:exportFieldMappings,delimiter:exportForm.delimiter,date_format:exportForm.date_format,from:exportFromDate,to:exportToDate},template_id:exportForm.template_id||null,template_name:exportForm.template_name||null});if(error)throw error;}downloadBlob(output.blob,`armaZen-${safeName}.${output.extension}`);},"Arquivo gerado. A geração não significa que o ERP recebeu ou importou os dados.")}><Download className="h-4 w-4"/> Gerar arquivo</button><span className="text-sm text-muted-foreground">{preview.length} registro(s) na prévia</span></div>
-      {preview.length>0&&<div className="mt-4"><div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs"><span className="text-muted-foreground">Exibindo até 10 linhas da prévia; limite de 5.000 registros carregados.</span><div className="flex flex-wrap gap-3"><span className={exportMissingValues?"font-medium text-amber-700":"text-emerald-700"}>{exportMissingValues} campo(s) vazio(s) na seleção</span><span className={exportMissingRequired?"font-medium text-destructive":"text-emerald-700"}>{exportMissingRequired} obrigatório(s) vazio(s)</span></div></div><Table headers={Object.keys(preview[0]??{})} rows={preview.slice(0,10).map(row=>Object.keys(preview[0]??{}).map(field=>pretty(row[field])))}/></div>}
+
+      {exportStep === 1 && (
+        <div className="space-y-4">
+          <div>
+            <h3 className="font-semibold">1. O que você deseja exportar?</h3>
+            <p className="mt-1 text-sm text-muted-foreground">Escolha o tipo de informação que será colocado no arquivo.</p>
+          </div>
+          <SelectField
+            label="Tipo de informação"
+            value={exportForm.dataset}
+            onChange={(value) => {
+              setExportForm((current) => ({ ...current, dataset: value, template_id: "", template_name: "" }));
+              setPreview([]);
+              setExportStep(1);
+            }}
+            options={Object.entries(datasets).map(([value, dataset]) => ({ value, label: dataset.label }))}
+          />
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field
+              label={exportForm.dataset === "balances" ? "Atualizado a partir de" : "Criado a partir de"}
+              type="date"
+              value={exportFromDate}
+              onChange={(value) => { setExportFromDate(value); setPreview([]); }}
+            />
+            <Field
+              label={exportForm.dataset === "balances" ? "Atualizado até" : "Criado até"}
+              type="date"
+              value={exportToDate}
+              onChange={(value) => { setExportToDate(value); setPreview([]); }}
+            />
+          </div>
+          <Field
+            label="Filtro opcional"
+            value={exportSearch}
+            onChange={(value) => { setExportSearch(value); setPreview([]); }}
+            placeholder="Digite um código, descrição, endereço ou informação"
+          />
+          <p className="text-xs text-muted-foreground">O filtro procura nos campos que você escolherá na próxima etapa. As datas usam a criação dos registros, exceto nos saldos, que usam a última atualização.</p>
+          <div className="flex justify-end">
+            <button type="button" className="h-10 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground" onClick={() => setExportStep(2)}>
+              Continuar
+            </button>
+          </div>
+        </div>
+      )}
+
+      {exportStep === 2 && (
+        <div className="space-y-5">
+          <div>
+            <h3 className="font-semibold">2. Escolha as informações e o formato</h3>
+            <p className="mt-1 text-sm text-muted-foreground">Os campos obrigatórios já vêm selecionados e não podem ser removidos.</p>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <SelectField
+              label="Formato do arquivo"
+              value={exportForm.format}
+              onChange={(value) => setExportForm((current) => ({ ...current, format: value }))}
+              options={[
+                { value: "xlsx", label: "Planilha Excel (.xlsx) — recomendado para conferência" },
+                { value: "csv", label: "CSV — quando o ERP solicitar esse formato" },
+                { value: "json", label: "JSON — uso técnico/avançado" },
+              ]}
+            />
+            {exportForm.format === "csv" && (
+              <SelectField
+                label="Separador entre colunas"
+                value={exportForm.delimiter}
+                onChange={(value) => setExportForm((current) => ({ ...current, delimiter: value }))}
+                options={[
+                  { value: ";", label: "Ponto e vírgula (;)" },
+                  { value: ",", label: "Vírgula (,)" },
+                  { value: "|", label: "Barra vertical (|)" },
+                  { value: "\t", label: "Tabulação" },
+                ]}
+              />
+            )}
+            <SelectField
+              label="Formato das datas"
+              value={exportForm.date_format}
+              onChange={(value) => setExportForm((current) => ({ ...current, date_format: value }))}
+              options={[
+                { value: "BR", label: "Brasil — DD/MM/AAAA" },
+                { value: "ISO", label: "Internacional — AAAA-MM-DD" },
+              ]}
+            />
+            <SelectField
+              label="Usar uma configuração salva"
+              value={exportForm.template_id}
+              onChange={(value) => {
+                const template = templates.find((item) => item.id === value);
+                if (!template) {
+                  setExportForm((current) => ({ ...current, template_id: "", template_name: "" }));
+                  return;
+                }
+                const config = (template.config ?? {}) as AnyRow;
+                const savedFields = Array.isArray(config.fields) ? config.fields.filter((field: unknown): field is string => typeof field === "string") : datasets[exportForm.dataset]!.fields;
+                const requiredFields = mandatoryExportFields[exportForm.dataset as ExportDataset];
+                setSelectedFields(Array.from(new Set([...requiredFields, ...savedFields])));
+                setExportFieldMappings((config.mappings ?? {}) as Record<string, string>);
+                setExportForm((current) => ({
+                  ...current,
+                  template_id: value,
+                  template_name: template.name,
+                  format: ["csv", "xlsx", "json"].includes(String(config.format)) ? String(config.format) : current.format,
+                  delimiter: typeof config.delimiter === "string" ? config.delimiter : current.delimiter,
+                  date_format: config.date_format === "BR" ? "BR" : config.date_format === "ISO" ? "ISO" : current.date_format,
+                }));
+                setPreview([]);
+              }}
+              options={templates.filter((template) => template.dataset === exportForm.dataset).map((template) => ({ value: template.id, label: template.name }))}
+            />
+          </div>
+
+          <div>
+            <h4 className="mb-2 text-sm font-semibold">Informações que entrarão no arquivo</h4>
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              {datasets[exportForm.dataset]!.fields.map((field) => {
+                const required = mandatoryExportFields[exportForm.dataset as ExportDataset].includes(field);
+                return (
+                  <label key={field} className="flex min-w-0 items-start gap-2 rounded-lg border px-3 py-2.5 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={selectedFields.includes(field)}
+                      disabled={required}
+                      onChange={(event) => {
+                        setSelectedFields((current) => event.target.checked ? [...current, field] : current.filter((item) => item !== field));
+                        setPreview([]);
+                      }}
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="block font-medium">{getExportFieldLabel(field)}</span>
+                      <span className="block break-all text-xs text-muted-foreground">{field}</span>
+                    </span>
+                    {required && <span className="shrink-0 text-[10px] font-semibold text-primary">Obrigatório</span>}
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="rounded-lg border p-4">
+            <h4 className="font-semibold">Personalizar nomes das colunas (opcional)</h4>
+            <p className="mt-1 text-sm text-muted-foreground">Use os nomes que o seu ERP espera. Isso altera o título da coluna, não o conteúdo do sistema de destino.</p>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              {selectedFields.map((field) => (
+                <Field
+                  key={field}
+                  label={"Nome da coluna: " + getExportFieldLabel(field)}
+                  value={exportFieldMappings[field] ?? getDefaultExportColumnName(field)}
+                  placeholder={getDefaultExportColumnName(field)}
+                  onChange={(value) => {
+                    setExportFieldMappings((current) => ({ ...current, [field]: value }));
+                    setPreview([]);
+                  }}
+                  required
+                />
+              ))}
+            </div>
+          </div>
+
+          {canManage && (
+            <div className="flex flex-wrap items-end gap-3 rounded-lg bg-muted/30 p-3">
+              <div className="w-full max-w-sm">
+                <Field
+                  label="Nome para salvar esta configuração"
+                  value={exportForm.template_name}
+                  onChange={(value) => setExportForm((current) => ({ ...current, template_name: value }))}
+                  placeholder="Ex.: Importação de materiais"
+                />
+              </div>
+              <button
+                type="button"
+                className="h-10 rounded-lg border px-4 text-sm font-medium"
+                disabled={!exportForm.template_name.trim() || selectedFields.length === 0 || saving}
+                onClick={() => void runSave(async () => {
+                  const payload = {
+                    org_id: orgId,
+                    name: exportForm.template_name.trim(),
+                    dataset: exportForm.dataset,
+                    created_by: user?.id,
+                    config: {
+                      fields: selectedFields,
+                      mappings: exportFieldMappings,
+                      delimiter: exportForm.delimiter,
+                      date_format: exportForm.date_format,
+                      format: exportForm.format,
+                    },
+                    updated_at: new Date().toISOString(),
+                  };
+                  const { error } = await db.from("export_templates").insert(payload);
+                  if (error) throw error;
+                  setExportForm((current) => ({ ...current, template_name: "" }));
+                }, "Configuração salva para reutilização.")}
+              >
+                Salvar configuração
+              </button>
+            </div>
+          )}
+
+          <div className="flex flex-wrap justify-between gap-2">
+            <button type="button" className="h-10 rounded-lg border px-4 text-sm" onClick={() => setExportStep(1)}>Voltar</button>
+            <button type="button" className="h-10 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground" disabled={selectedFields.length === 0} onClick={() => setExportStep(3)}>
+              Continuar para conferência
+            </button>
+          </div>
+        </div>
+      )}
+
+      {exportStep === 3 && (
+        <div className="space-y-4">
+          <div>
+            <h3 className="font-semibold">3. Confira os dados antes de gerar</h3>
+            <p className="mt-1 text-sm text-muted-foreground">A prévia mostra até 10 linhas. O arquivo completo poderá conter até 5.000 registros nesta versão.</p>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-3">
+            <div className="rounded-lg border p-3">
+              <p className="text-xs text-muted-foreground">Tipo de informação</p>
+              <p className="mt-1 font-semibold">{datasets[exportForm.dataset]!.label}</p>
+            </div>
+            <div className="rounded-lg border p-3">
+              <p className="text-xs text-muted-foreground">Formato</p>
+              <p className="mt-1 font-semibold">{exportForm.format.toUpperCase()}</p>
+            </div>
+            <div className="rounded-lg border p-3">
+              <p className="text-xs text-muted-foreground">Colunas selecionadas</p>
+              <p className="mt-1 font-semibold">{selectedFields.length}</p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap justify-between gap-2">
+            <button type="button" className="h-10 rounded-lg border px-4 text-sm" onClick={() => setExportStep(2)}>Voltar para ajustes</button>
+            <button type="button" className="flex h-10 items-center gap-2 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground" disabled={loading || selectedFields.length === 0} onClick={() => void runExportPreview()}>
+              <Search className="h-4 w-4" /> Atualizar prévia
+            </button>
+          </div>
+
+          {preview.length > 0 && (
+            <div className="space-y-3">
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs text-muted-foreground">Registros encontrados</p>
+                  <p className="mt-1 text-xl font-semibold tabular-nums">{preview.length}</p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs text-muted-foreground">Campos obrigatórios vazios</p>
+                  <p className={"mt-1 text-xl font-semibold tabular-nums " + (exportMissingRequired > 0 ? "text-destructive" : "text-emerald-700")}>{exportMissingRequired}</p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs text-muted-foreground">Outros campos vazios</p>
+                  <p className="mt-1 text-xl font-semibold tabular-nums">{exportMissingValues}</p>
+                </div>
+              </div>
+
+              {exportMissingSelection.length > 0 && (
+                <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm">
+                  Colunas obrigatórias não selecionadas: {exportMissingSelection.map(getExportFieldLabel).join(", ")}.
+                </div>
+              )}
+              {exportRequiredDetails.length > 0 && (
+                <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm">
+                  <p className="font-semibold">Corrija os campos obrigatórios antes de gerar o arquivo:</p>
+                  <ul className="mt-2 list-disc space-y-1 pl-5">
+                    {exportRequiredDetails.map((item) => <li key={item.field}>{item.label}: {item.rows} registro(s) sem valor</li>)}
+                  </ul>
+                </div>
+              )}
+              {exportReferenceIssues > 0 && (
+                <div role="status" className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm">
+                  Não foi possível localizar {exportReferenceIssues} referência(s) de cadastro. Esses valores ficaram vazios em vez de expor identificadores internos; revise os cadastros antes de continuar.
+                </div>
+              )}
+              {exportAtLimit && (
+                <div role="status" className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm">
+                  A consulta atingiu o limite de 5.000 registros. Pode haver mais dados fora deste arquivo; considere restringir o período.
+                </div>
+              )}
+              {exportMissingRequired === 0 && exportMissingSelection.length === 0 && (
+                <p className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3 text-sm">Os campos obrigatórios selecionados possuem valores. Confira a amostra antes de gerar.</p>
+              )}
+              <div>
+                <p className="mb-2 text-xs text-muted-foreground">Amostra das primeiras 10 linhas. A ordem das colunas segue a ordem padrão do conjunto selecionado.</p>
+                <Table headers={Object.keys(preview[0] ?? {})} rows={preview.slice(0, 10).map((row) => Object.keys(preview[0] ?? {}).map((field) => pretty(row[field])))}/>
+              </div>
+            </div>
+          )}
+
+          {preview.length === 0 && (
+            <Empty>Selecione “Atualizar prévia” para carregar os registros e verificar possíveis problemas.</Empty>
+          )}
+
+          <div className="flex justify-end border-t pt-4">
+            <button
+              type="button"
+              className="flex h-10 items-center gap-2 rounded-lg border px-4 text-sm font-semibold"
+              disabled={preview.length === 0 || exportMissingRequired > 0 || exportMissingSelection.length > 0 || saving}
+              onClick={() => void runSave(createExportFile, "Arquivo gerado. A geração não significa que o ERP recebeu ou importou os dados.")}
+            >
+              <Download className="h-4 w-4" /> Gerar arquivo
+            </button>
+          </div>
+        </div>
+      )}
+
+      {exportStep === 4 && (
+        <div className="space-y-4">
+          <div className="rounded-xl border p-5">
+            <div className="flex items-center gap-3">
+              <CheckCircle2 className="h-7 w-7 text-emerald-600" />
+              <div>
+                <h3 className="font-semibold">Arquivo preparado</h3>
+                <p className="text-sm text-muted-foreground">O download foi solicitado pelo navegador. O ERP ainda não recebeu os dados.</p>
+              </div>
+            </div>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <div><p className="text-xs text-muted-foreground">Nome do arquivo</p><p className="mt-1 break-all font-mono text-sm">{exportLastFile}</p></div>
+              <div><p className="text-xs text-muted-foreground">Registros incluídos</p><p className="mt-1 font-semibold">{preview.length}</p></div>
+            </div>
+          </div>
+          <p className="text-sm text-muted-foreground">Antes de importar, confirme se as colunas e os formatos correspondem ao layout exigido pelo seu ERP. Um arquivo CSV ou Excel legível não é automaticamente um arquivo de importação compatível.</p>
+          <button
+            type="button"
+            className="h-10 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground"
+            onClick={() => {
+              setExportStep(1);
+              setPreview([]);
+              setExportLastFile("");
+              setExportForm((current) => ({ ...current, template_id: "", template_name: "" }));
+            }}
+          >
+            Preparar outra exportação
+          </button>
+        </div>
+      )}
     </Panel>
-    <Panel title="Histórico de exportações" description="Auditoria das gerações de arquivo registradas no banco."><Table headers={["Data","Conjunto","Formato","Registros","Modelo","Usuário"]} rows={history.map(h=>[new Date(h.created_at).toLocaleString("pt-BR"),datasets[h.dataset]?.label??h.dataset,h.format,h.record_count,pretty(h.template_name),pretty(h.user_id)])}/></Panel>
+
+    <Panel title="Histórico de exportações" description="Registro dos arquivos gerados nesta organização.">
+      <Table
+        headers={["Data", "Informação", "Formato", "Registros", "Configuração", "Responsável"]}
+        rows={history.map((item) => {
+          const member = members.find((entry) => entry.user_id === item.user_id);
+          return [
+            new Date(item.created_at).toLocaleString("pt-BR"),
+            datasets[item.dataset]?.label ?? item.dataset,
+            String(item.format).toUpperCase(),
+            item.record_count,
+            pretty(item.template_name),
+            pretty(member?.profiles?.full_name ?? member?.profiles?.email ?? "Usuário não identificado"),
+          ];
+        })}
+      />
+    </Panel>
   </div>;
 
   const settingsSection = <div className="space-y-5">
