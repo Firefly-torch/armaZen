@@ -1,3 +1,4 @@
+-- Apply after 20261113000000_isolated_demo_workspaces.sql.
 -- Keep demo seed movements compatible with storage capacity rules.
 -- Make fictitious inventory accuracy deterministic: never create a phantom balance
 -- on whichever material happens to sort first.
@@ -36,7 +37,7 @@ begin
       insert into public.locations(org_id,warehouse_id,parent_id,level_id,code,name,capacity,capacity_unit,pos_x,pos_y) values (_org,wh,e,lv_pos,'INT-FAB-E0'||i||'-N0'||j,'Nível 0'||j,200,case when i = 2 and j = 1 then 'cx' else 'L' end,j-1,0) returning id into c; locs := locs || c;
     end loop;
   end loop;
-  -- locs: 1..12 containers (kg), 13..15 pátio (un), 16..21 fábrica (L)
+  -- locs: 1..12 containers (kg), 13..15 pátio (un), 16..18 and 20..21 fábrica (L), 19 (E02-N01) fábrica (cx)
 
   insert into public.material_attributes(org_id,key,label,data_type) values (_org,'fornecedor','Fornecedor','text'),(_org,'classe_risco','Classe de risco','text');
 
@@ -411,5 +412,8 @@ revoke all on function public.ensure_demo_inventory_accuracy(uuid)
   from public, anon, authenticated;
 grant execute on function public.ensure_demo_inventory_accuracy(uuid)
   to service_role;
+
+-- Ensure PostgREST sees the new/updated functions after commit.
+notify pgrst, 'reload schema';
 
 commit;
