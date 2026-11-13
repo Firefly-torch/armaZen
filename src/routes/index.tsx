@@ -390,6 +390,7 @@ function Index() {
   const [exportRequiredDetails, setExportRequiredDetails] = useState<Array<{ field: string; label: string; rows: number }>>([]);
   const [exportReferenceIssues, setExportReferenceIssues] = useState(0);
   const [exportAtLimit, setExportAtLimit] = useState(false);
+  const [exportPreviewLoaded, setExportPreviewLoaded] = useState(false);
   const [exportSearch, setExportSearch] = useState("");
   const [exportStep, setExportStep] = useState(1);
   const [exportLastFile, setExportLastFile] = useState("");
@@ -401,12 +402,14 @@ function Index() {
     setSelectedFields(datasets[exportForm.dataset]?.fields ?? []);
     setExportFieldMappings({});
     setPreview([]);
+              setExportPreviewLoaded(false);
     setExportMissingValues(0);
     setExportMissingRequired(0);
     setExportMissingSelection([]);
     setExportRequiredDetails([]);
     setExportReferenceIssues(0);
     setExportAtLimit(false);
+    setExportPreviewLoaded(false);
     setExportSearch("");
     setExportStep(1);
     setExportLastFile("");
@@ -1848,6 +1851,7 @@ function Index() {
       setExportReferenceIssues(resolved.unresolvedReferences);
       setExportAtLimit(sourceRows.length === 5000);
       setPreview(previewRows);
+      setExportPreviewLoaded(true);
       notify("Prévia carregada: " + filteredRows.length + " registro(s). Confira os campos obrigatórios antes de gerar o arquivo.");
     } catch (error) {
       fail(error);
@@ -1931,6 +1935,7 @@ function Index() {
             onChange={(value) => {
               setExportForm((current) => ({ ...current, dataset: value, template_id: "", template_name: "" }));
               setPreview([]);
+              setExportPreviewLoaded(false);
               setExportStep(1);
             }}
             options={Object.entries(datasets).map(([value, dataset]) => ({ value, label: dataset.label }))}
@@ -1940,19 +1945,22 @@ function Index() {
               label={exportForm.dataset === "balances" ? "Atualizado a partir de" : "Criado a partir de"}
               type="date"
               value={exportFromDate}
-              onChange={(value) => { setExportFromDate(value); setPreview([]); }}
+              onChange={(value) => { setExportFromDate(value); setPreview([]);
+              setExportPreviewLoaded(false); }}
             />
             <Field
               label={exportForm.dataset === "balances" ? "Atualizado até" : "Criado até"}
               type="date"
               value={exportToDate}
-              onChange={(value) => { setExportToDate(value); setPreview([]); }}
+              onChange={(value) => { setExportToDate(value); setPreview([]);
+              setExportPreviewLoaded(false); }}
             />
           </div>
           <Field
             label="Filtro opcional"
             value={exportSearch}
-            onChange={(value) => { setExportSearch(value); setPreview([]); }}
+            onChange={(value) => { setExportSearch(value); setPreview([]);
+              setExportPreviewLoaded(false); }}
             placeholder="Digite um código, descrição, endereço ou informação"
           />
           <p className="text-xs text-muted-foreground">O filtro procura nos campos que você escolherá na próxima etapa. As datas usam a criação dos registros, exceto nos saldos, que usam a última atualização.</p>
@@ -2013,7 +2021,8 @@ function Index() {
                   return;
                 }
                 const config = (template.config ?? {}) as AnyRow;
-                const savedFields = Array.isArray(config.fields) ? config.fields.filter((field: unknown): field is string => typeof field === "string") : datasets[exportForm.dataset]!.fields;
+                const allowedFields = new Set(datasets[exportForm.dataset]!.fields);
+                const savedFields = Array.isArray(config.fields) ? config.fields.filter((field: unknown): field is string => typeof field === "string" && allowedFields.has(field)) : datasets[exportForm.dataset]!.fields;
                 const requiredFields = mandatoryExportFields[exportForm.dataset as ExportDataset];
                 setSelectedFields(Array.from(new Set([...requiredFields, ...savedFields])));
                 setExportFieldMappings((config.mappings ?? {}) as Record<string, string>);
@@ -2026,6 +2035,7 @@ function Index() {
                   date_format: config.date_format === "BR" ? "BR" : config.date_format === "ISO" ? "ISO" : current.date_format,
                 }));
                 setPreview([]);
+              setExportPreviewLoaded(false);
               }}
               options={templates.filter((template) => template.dataset === exportForm.dataset).map((template) => ({ value: template.id, label: template.name }))}
             />
@@ -2045,6 +2055,7 @@ function Index() {
                       onChange={(event) => {
                         setSelectedFields((current) => event.target.checked ? [...current, field] : current.filter((item) => item !== field));
                         setPreview([]);
+              setExportPreviewLoaded(false);
                       }}
                     />
                     <span className="min-w-0 flex-1">
@@ -2071,6 +2082,7 @@ function Index() {
                   onChange={(value) => {
                     setExportFieldMappings((current) => ({ ...current, [field]: value }));
                     setPreview([]);
+              setExportPreviewLoaded(false);
                   }}
                   required
                 />
@@ -2206,7 +2218,7 @@ function Index() {
           )}
 
           {preview.length === 0 && (
-            <Empty>Selecione “Atualizar prévia” para carregar os registros e verificar possíveis problemas.</Empty>
+            <Empty>{exportPreviewLoaded ? "Nenhum registro encontrado com os filtros informados." : "Selecione “Atualizar prévia” para carregar os registros e verificar possíveis problemas."}</Empty>
           )}
 
           <div className="flex justify-end border-t pt-4">
@@ -2244,6 +2256,7 @@ function Index() {
             onClick={() => {
               setExportStep(1);
               setPreview([]);
+              setExportPreviewLoaded(false);
               setExportLastFile("");
               setExportForm((current) => ({ ...current, template_id: "", template_name: "" }));
             }}
