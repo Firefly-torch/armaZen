@@ -1,6 +1,14 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { createFileRoute } from "@tanstack/react-router";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import * as XLSX from "xlsx";
 import {
   Activity, AlertTriangle, ArrowLeftRight, Boxes, Cable, CheckCircle2, ClipboardCheck,
@@ -404,7 +412,7 @@ function Index() {
       });
       return () => { alive = false; data.subscription.unsubscribe(); };
     } catch (e) { setDataError(errorMessage(e)); setUser(null); return () => { alive = false; }; }
-  }, []);
+  }, [navigateToSection]);
 
   useEffect(() => {
     if (!user) { setOrgId(""); setOrgName(""); setRole(""); return; }
@@ -645,7 +653,7 @@ function Index() {
     } else if (role === "operacao" && (section === "exports" || section === "settings")) {
       navigateToSection("dashboard");
     }
-  }, [user, role, section]);
+  }, [user, role, section, navigateToSection]);
 
   // Show loading splash while checking session
   if (user === undefined) {
